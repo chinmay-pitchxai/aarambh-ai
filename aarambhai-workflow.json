@@ -1,0 +1,432 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "AarambhAI \u2014 Production Cold Call Workflow",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "happy",
+        "label": "Full Pipeline",
+        "focus": [
+          "apollo",
+          "scout",
+          "ranker",
+          "dialer",
+          "nudge",
+          "booked"
+        ],
+        "note": "Source \u2192 Score \u2192 Dial \u2192 Nurture \u2192 Book."
+      },
+      {
+        "id": "retry",
+        "label": "Retry Loop",
+        "focus": [
+          "dialer",
+          "nudge",
+          "retry",
+          "rlm"
+        ],
+        "note": "No answer/failed \u2192 WA \u2192 24h \u2192 retry."
+      },
+      {
+        "id": "memory",
+        "label": "Memory + Audit",
+        "focus": [
+          "leads_db",
+          "semantica",
+          "rlm",
+          "drop"
+        ],
+        "note": "Mother DB, PROV-O, RLM recall, Park/DNC."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "sources",
+      "label": "Sources & Retry"
+    },
+    {
+      "id": "agents",
+      "label": "Score & Analyze"
+    },
+    {
+      "id": "voice",
+      "label": "Dial & Remind"
+    },
+    {
+      "id": "nurture",
+      "label": "Follow-up & Book"
+    },
+    {
+      "id": "guard",
+      "label": "Memory & Compliance",
+      "variant": "exception"
+    }
+  ],
+  "phases": [
+    {
+      "id": "ingest",
+      "label": "Ingest",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "score",
+      "label": "Score & Gate",
+      "fromCol": 2,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "act",
+      "label": "Call & Nurture",
+      "fromCol": 3,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "close",
+      "label": "Outcome",
+      "fromCol": 5,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "groups": [
+    {
+      "id": "hunt",
+      "label": "Hunt & Store",
+      "lane": "sources",
+      "fromCol": 0,
+      "toCol": 1,
+      "variant": "dashed"
+    },
+    {
+      "id": "call",
+      "label": "Gemini Live",
+      "lane": "voice",
+      "fromCol": 3,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "leak",
+      "label": "Memory Store",
+      "lane": "guard",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "security"
+    }
+  ],
+  "mainPath": [
+    "apollo",
+    "scout",
+    "ranker",
+    "dialer",
+    "nudge",
+    "booked"
+  ],
+  "nodes": [
+    {
+      "id": "apollo",
+      "lane": "sources",
+      "col": 0,
+      "type": "external",
+      "label": "Apollo / Maps",
+      "sublabel": "50+ fields",
+      "tag": "6 providers",
+      "width": 128
+    },
+    {
+      "id": "scout",
+      "lane": "sources",
+      "col": 1,
+      "type": "backend",
+      "label": "Scout Agent",
+      "sublabel": "hunt + enrich",
+      "tag": "LangGraph",
+      "width": 128
+    },
+    {
+      "id": "leads_db",
+      "lane": "guard",
+      "col": 1,
+      "type": "database",
+      "label": "Mother Leads DB",
+      "sublabel": "shared pool",
+      "tag": "cross-client",
+      "width": 140
+    },
+    {
+      "id": "ranker",
+      "lane": "agents",
+      "col": 2,
+      "type": "backend",
+      "label": "Ranker",
+      "sublabel": "1-100 score",
+      "tag": "Hot/Warm/Cold",
+      "width": 128
+    },
+    {
+      "id": "llm_lab",
+      "lane": "agents",
+      "col": 3,
+      "type": "backend",
+      "label": "LLM Lab",
+      "sublabel": "Gemini analysis",
+      "tag": "score + pitch",
+      "width": 128
+    },
+    {
+      "id": "dialer",
+      "lane": "voice",
+      "col": 3,
+      "type": "messagebus",
+      "label": "Dialer Agent",
+      "sublabel": "Gemini+Vobiz",
+      "tag": "call < 5min",
+      "width": 128
+    },
+    {
+      "id": "nudge",
+      "lane": "nurture",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Nudge Agent",
+      "sublabel": "WA+Gmail",
+      "tag": "templates",
+      "width": 128
+    },
+    {
+      "id": "retry",
+      "lane": "sources",
+      "col": 4,
+      "type": "backend",
+      "label": "Retry 24h",
+      "sublabel": "no answer/failed",
+      "width": 124
+    },
+    {
+      "id": "booked",
+      "lane": "nurture",
+      "col": 5,
+      "type": "frontend",
+      "label": "Meeting Booked",
+      "sublabel": "calendar link",
+      "width": 128
+    },
+    {
+      "id": "drop",
+      "lane": "guard",
+      "col": 5,
+      "type": "database",
+      "label": "Park/DNC/DLQ",
+      "sublabel": "fail+opt-out",
+      "tag": "ops alert",
+      "width": 124
+    },
+    {
+      "id": "reminder",
+      "lane": "voice",
+      "col": 5,
+      "type": "messagebus",
+      "label": "Reminder 30m",
+      "sublabel": "pre-meeting",
+      "width": 124
+    },
+    {
+      "id": "dashboard",
+      "lane": "agents",
+      "col": 5,
+      "type": "frontend",
+      "label": "Dashboard",
+      "sublabel": "pipeline KPI",
+      "width": 124
+    },
+    {
+      "id": "rlm",
+      "lane": "guard",
+      "col": 4,
+      "type": "database",
+      "label": "RLM Memory",
+      "sublabel": "call+text recall",
+      "tag": "personalized",
+      "width": 128
+    },
+    {
+      "id": "semantica",
+      "lane": "guard",
+      "col": 2,
+      "type": "database",
+      "label": "Semantica",
+      "sublabel": "PROV-O audit",
+      "tag": "bi-temporal",
+      "width": 128
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-apollo-scout",
+      "from": "apollo",
+      "to": "scout",
+      "label": "pull 100",
+      "variant": "default"
+    },
+    {
+      "id": "e-scout-leads",
+      "from": "scout",
+      "to": "leads_db",
+      "label": "store+dedupe",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-scout-ranker",
+      "from": "scout",
+      "to": "ranker",
+      "label": "enriched",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-scout-sem",
+      "from": "scout",
+      "to": "semantica",
+      "label": "PROV-O record",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-ranker-llm",
+      "from": "ranker",
+      "to": "llm_lab",
+      "label": "LLM analyze",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-ranker-dialer",
+      "from": "ranker",
+      "to": "dialer",
+      "label": "Hot/Warm + consent check",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-llm-dialer",
+      "from": "llm_lab",
+      "to": "dialer",
+      "label": "scored+pitch",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-dialer-nudge",
+      "from": "dialer",
+      "to": "nudge",
+      "label": "BANT result",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-dialer-rlm",
+      "from": "dialer",
+      "to": "rlm",
+      "label": "store call",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-nudge-rlm",
+      "from": "nudge",
+      "to": "rlm",
+      "label": "store text",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-nudge-booked",
+      "from": "nudge",
+      "to": "booked",
+      "label": "interested",
+      "variant": "emphasis"
+    },
+    {
+      "id": "e-nudge-retry",
+      "from": "nudge",
+      "to": "retry",
+      "label": "no answer",
+      "variant": "dashed"
+    },
+    {
+      "id": "e-nudge-drop",
+      "from": "nudge",
+      "to": "drop",
+      "label": "not interested",
+      "variant": "security"
+    },
+    {
+      "id": "e-retry-dialer",
+      "from": "retry",
+      "to": "dialer",
+      "label": "retry call",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Mother DB \u2014 Cross-Use",
+      "items": [
+        "PostgreSQL mother pool, global dedupe phoneE164/email",
+        "ICP match \u2192 share lead \u2192 skip Apollo, save \u20b94K-10K/mo",
+        "Billing: source_cost + reused_from per row \u2192 client splits",
+        "Freshness TTL: Redis 30d, stale \u2192 re-pull from Apollo"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "RLM Memory \u2014 No Restart",
+      "items": [
+        "Every call transcript \u2192 RLM via Semantica vector + graph",
+        "Every WA/Gmail text \u2192 RLM linked to same leadId",
+        "Before next turn: recall full history \u2192 personalized greeting",
+        "Eviction: 90d text summaries, 365d key events"
+      ]
+    },
+    {
+      "dot": "slate",
+      "title": "Semantica \u2014 PROV-O Audit",
+      "items": [
+        "Every interaction = edge + PROV-O provenance + bi-temporal",
+        "trace_decision_chain for cross-border compliance audit",
+        "state_at() time travel: what consent status at call time",
+        "Vector + graph: semantic dedup across client boundaries"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Consent Gate (pre-dial)",
+      "items": [
+        "Ranker checks DNC global + client opt-in before routing to Dialer",
+        "Block if no consent \u2192 Park/DNC immediately",
+        "Consent status stored in Semantica with timestamp"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Ops \u2014 Retry + DLQ + Dashboard",
+      "items": [
+        "Nudge: no answer/failed \u2192 WA \"tried reaching\" \u2192 Retry 24h \u2192 dialer",
+        "Nudge: not interested \u2192 Park/DNC/DLQ + ops alert",
+        "Booked \u2192 30m reminder call + Dashboard tracks pipeline KPI",
+        "Dashboard: Hot/Warm/Cold counts, booking rate, ROAS per client"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "5 Dialer Outcomes",
+      "items": [
+        "(1) No response \u2192 WA \u2192 retry 24h",
+        "(2) Failed (busy/invalid) \u2192 retry 24h",
+        "(3) Not interested \u2192 Park/DNC",
+        "(4) Interested \u2192 info + query + meeting link \u2192 Booked",
+        "(5) Booked \u2192 30m reminder call"
+      ]
+    }
+  ]
+}

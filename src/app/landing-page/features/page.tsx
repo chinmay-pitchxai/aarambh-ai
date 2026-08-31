@@ -1,0 +1,220 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+
+const PIPELINE_FEATURES = [
+  {
+    category: "Lead Sourcing",
+    icon: "target",
+    title: "We Find Your Buyers",
+    description: "Tell us who you sell to. We scan our lead database with 10+ filters — title, location, company size, tech stack — and build a targeted list. Every lead gets a fit score. No guesswork.",
+    details: ["10+ ICP filters for precise targeting", "Mother DB deduplication — never call the same lead twice", "1-100 fit scoring per lead", "CSV import & export", "Real-time data enrichment"],
+    color: "var(--accent)",
+  },
+  {
+    category: "Compliance",
+    icon: "shield",
+    title: "We Keep You Legal",
+    description: "Every lead is checked against India's NDNC registry before any dial. Opt-outs are honoured instantly. Consent logs go straight to your CRM. GDPR-compliant from day one.",
+    details: ["NDNC list checking before every call", "GDPR-compliant consent logging", "Automatic opt-out handling", "CRM consent sync", "Audit trail for every call"],
+    color: "var(--terracotta)",
+  },
+  {
+    category: "Dialing",
+    icon: "phone",
+    title: "We Call Everyone",
+    description: "AI-powered cold calls with real-time voice analysis. Five-outcome classification on every call. Warm leads get routed to your team instantly. Dead-end conversations? Eliminated.",
+    details: ["Integrated voice calling", "5-outcome call classification", "Live agent routing", "Call recording & transcription", "Smart retry scheduling"],
+    color: "var(--amber)",
+  },
+  {
+    category: "AI Qualification",
+    icon: "sparkles",
+    title: "We Qualify on the Phone",
+    description: "Gemini AI analyses every transcript. BANT scoring happens in real-time. Leads get classified as Hot/Warm/Cold automatically. Your team only talks to people who are ready to buy.",
+    details: ["Gemini LLM transcript analysis", "Budget, Authority, Need, Timeline scoring", "Real-time intent detection", "Hot/Warm/Cold band classification", "Pitch suggestion engine"],
+    color: "var(--green)",
+  },
+  {
+    category: "Follow-Up",
+    icon: "message",
+    title: "We Follow Up Forever",
+    description: "WhatsApp and Gmail sequences trigger automatically based on call outcomes. Leads who didn't pick up get nurtured. Day 1, 2, 5, 14, 30, 60, 90 — until they say not interested.",
+    details: ["WhatsApp Business API integration", "Gmail follow-up sequences", "Outcome-triggered automations", "Personalised templates", "A/B testing for messages"],
+    color: "var(--accent)",
+  },
+  {
+    category: "Analytics",
+    icon: "chart",
+    title: "You See Everything",
+    description: "Real-time pipeline stats, cost tracking, conversion metrics, ROI analysis. See exactly where every lead is, what happened, and what's next. No more 'I think someone called them.'",
+    details: ["Real-time pipeline funnel", "Cost per lead & per meeting", "Conversion rate tracking", "ROI by channel", "Exportable reports"],
+    color: "var(--terracotta)",
+  },
+  {
+    category: "Recovery",
+    icon: "refresh",
+    title: "Nothing Ever Drops",
+    description: "24-hour smart retry queue with escalating cadence. Parked leads get re-engaged automatically. DLQ handling ensures every lead gets its chance. Zero leakage, always.",
+    details: ["24h smart retry queue", "Escalating retry cadence", "Parked lead re-engagement", "DLQ auto-handling", "Dead lead resurrection"],
+    color: "var(--amber)",
+  },
+  {
+    category: "Billing",
+    icon: "wallet",
+    title: "You Control the Spend",
+    description: "Unified wallet for lead sourcing and cold calling. Set auto-recharge thresholds, spend caps per client, and real-time cost alerts. Predictable costs. No surprises.",
+    details: ["Unified wallet for all APIs", "Auto-recharge thresholds", "Per-client spend caps", "Real-time cost alerts", "Invoice & billing history"],
+    color: "var(--green)",
+  },
+];
+
+const ICONS: Record<string, JSX.Element> = {
+  target: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>,
+  shield: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>,
+  phone: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 2.18 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .71 6.51 2 2 0 0 1-.45 2.11l-1.27 1.27a12.84 12.84 0 0 0 6.51.71 2 2 0 0 1 2.11-.45l1.27 1.27a2 2 0 0 1 0 2.97z"/></svg>,
+  sparkles: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.912 5.813h6.112L15.06 12.187 16.972 18 12 14.625 7.028 18l1.912-5.813L2 8.813h6.112z"/></svg>,
+  message: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4l7 7 7-7z"/><path d="M3 10h18"/></svg>,
+  chart: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>,
+  refresh: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+  wallet: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4"/><path d="M4 6v12c0 1.1.9 2 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>,
+};
+
+export default function FeaturesPage() {
+  const [active, setActive] = useState(0);
+
+  return (
+    <div>
+      {/* Hero */}
+      <section style={{ padding: "80px 0 56px", background: "var(--bg)" }}>
+        <div style={{ maxWidth: 700, margin: "0 auto", padding: "0 24px", textAlign: "center" }}>
+          <div className="animate-fade-in-up" style={{
+            display: "inline-block", padding: "6px 16px", borderRadius: 20,
+            background: "var(--accent-soft)", color: "var(--accent)",
+            fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
+            marginBottom: 20,
+          }}>
+            Complete Feature Set
+          </div>
+          <h1 className="animate-fade-in-up delay-1" style={{ fontSize: 44, fontWeight: 400, color: "var(--text)", marginBottom: 16 }}>
+            Every Capability,<br />One Autonomous Pipeline
+          </h1>
+          <p className="animate-fade-in-up delay-2" style={{ fontSize: 17, color: "var(--text-dim)", lineHeight: 1.7 }}>
+            Eight AI agents working in concert. From &ldquo;tell us what you sell&rdquo; to &ldquo;your meeting is booked&rdquo; — fully autonomous.
+          </p>
+        </div>
+      </section>
+
+      {/* Features — sidebar + content */}
+      <section style={{ padding: "0 0 80px", background: "var(--bg)" }}>
+        <div style={{ maxWidth: 1000, margin: "0 auto", padding: "0 24px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 48 }}>
+            {/* Sidebar nav */}
+            <div>
+              <div style={{ position: "sticky", top: 80 }}>
+                {PIPELINE_FEATURES.map((f, i) => (
+                  <button
+                    key={f.title}
+                    onClick={() => setActive(i)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      width: "100%", padding: "12px 16px", border: "none",
+                      borderRadius: 10, cursor: "pointer", textAlign: "left",
+                      background: active === i ? "var(--accent-soft)" : "transparent",
+                      color: active === i ? "var(--accent)" : "var(--text-dim)",
+                      transition: "all 0.2s ease",
+                      marginBottom: 4,
+                      fontFamily: "Playfair Display, serif",
+                    }}
+                  >
+                    <span style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                      background: active === i ? `${f.color}18` : "var(--surface-2)",
+                      color: active === i ? f.color : "var(--text-light)",
+                      transition: "all 0.2s ease",
+                    }}>
+                      {ICONS[f.icon]}
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: active === i ? 600 : 400 }}>{f.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Content panel */}
+            <div>
+              {PIPELINE_FEATURES.map((f, i) => (
+                <div
+                  key={f.title}
+                  className={`animate-fade-in-up delay-${i + 1}`}
+                  style={{
+                    display: active === i ? "block" : "none",
+                    background: "var(--surface)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 16,
+                    padding: 40,
+                    minHeight: 400,
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                    <div style={{
+                      width: 40, height: 40, borderRadius: 10,
+                      background: `${f.color}18`, color: f.color,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {ICONS[f.icon]}
+                    </div>
+                    <span style={{ fontSize: 10, color: "var(--text-light)", letterSpacing: "0.1em", textTransform: "uppercase" }}>{f.category}</span>
+                  </div>
+                  <h2 style={{ fontSize: 24, fontWeight: 400, color: "var(--text)", marginBottom: 16, fontFamily: "Playfair Display, serif" }}>{f.title}</h2>
+                  <p style={{ fontSize: 15, color: "var(--text-dim)", lineHeight: 1.7, marginBottom: 28 }}>{f.description}</p>
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                    {f.details.map((d, j) => (
+                      <li key={d} style={{
+                        fontSize: 14, color: "var(--text-dim)", lineHeight: 2,
+                        display: "flex", alignItems: "center", gap: 10,
+                      }}>
+                        <div style={{
+                          width: 20, height: 20, borderRadius: 6,
+                          background: "var(--accent-soft)", color: "var(--accent)",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          flexShrink: 0,
+                        }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        </div>
+                        {d}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section style={{ padding: "56px 0", background: "var(--surface)", borderTop: "1px solid var(--border)" }}>
+        <div style={{ maxWidth: 600, margin: "0 auto", padding: "0 24px", textAlign: "center" }}>
+          <h2 style={{ fontSize: 28, fontWeight: 400, color: "var(--text)", marginBottom: 16, fontFamily: "Playfair Display, serif" }}>Ready to See It in Action?</h2>
+          <p style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 28 }}>Tell us what you sell. We&apos;ll show you the leads. 14-day free trial, no credit card.</p>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+            <Link href="/dashboard" className="btn-lift" style={{
+              background: "var(--accent)", color: "#fff", textDecoration: "none",
+              padding: "12px 28px", fontSize: 13, borderRadius: 8, fontWeight: 500,
+              fontFamily: "Playfair Display, serif",
+            }}>Start Free Trial</Link>
+            <Link href="/landing-page" style={{
+              background: "var(--bg)", color: "var(--text)", textDecoration: "none",
+              padding: "12px 28px", fontSize: 13, borderRadius: 8, fontWeight: 500,
+              border: "1px solid var(--border)",
+              fontFamily: "Playfair Display, serif",
+            }}>← Back to Home</Link>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}

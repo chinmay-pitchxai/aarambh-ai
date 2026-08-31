@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "AarambhAI — Cold Call Zero Leakage Lifecycle",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "main-lifecycle", "label": "Dial to Completed", "focus": ["dialing", "interested", "booked", "reminder", "completed"], "note": "Main lifecycle: dial → interested → booked → reminder → completed." },
+      { "id": "retry-waits", "label": "No Answer & Failed Retry", "focus": ["dialing", "no_response", "failed", "retry_wait"], "note": "No response / failed → WA/Gmail 'tried reaching' → wait 24h → retry." },
+      { "id": "terminal-exits", "label": "Parked & Drop", "focus": ["not_interested", "parked"], "note": "Not interested → Parked/DNC terminal, no further dial." }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "Call Lifecycle" },
+    { "id": "waiting", "label": "Wait & Retry" },
+    { "id": "exceptions", "label": "Recovery" },
+    { "id": "terminal", "label": "Terminal" }
+  ],
+  "states": [
+    { "id": "dialing", "type": "active", "label": "Dialing", "sublabel": "Gemini Live + Vobiz", "lane": "main", "col": 0, "step": "01", "tag": "call < 5 min" },
+    { "id": "interested", "type": "active", "label": "Interested", "sublabel": "BANT + query", "lane": "main", "col": 1, "step": "02", "tag": "send info" },
+    { "id": "booked", "type": "active", "label": "Meeting Booked", "sublabel": "calendar link sent", "lane": "main", "col": 2, "step": "03", "tag": "Semantica record" },
+    { "id": "reminder", "type": "decision", "label": "Reminder Check", "sublabel": "30m before call", "lane": "main", "col": 3, "step": "04", "tag": "guard" },
+    { "id": "completed", "type": "success", "label": "Completed", "sublabel": "meeting held", "lane": "main", "col": 4, "step": "05", "tag": "done" },
+    { "id": "no_response", "type": "waiting", "label": "Picked No Response", "sublabel": "ring → silence", "lane": "waiting", "col": 0, "tag": "WA/Gmail" },
+    { "id": "retry_wait", "type": "waiting", "label": "Wait 24h", "sublabel": "tried reaching msg", "lane": "waiting", "col": 1, "tag": "retry queue" },
+    { "id": "failed", "type": "failure", "label": "Failed", "sublabel": "busy / invalid", "lane": "exceptions", "col": 0, "yOffset": 78, "tag": "retryable" },
+    { "id": "not_interested", "type": "failure", "label": "Not Interested", "sublabel": "explicit no", "lane": "terminal", "col": 0, "tag": "park" },
+    { "id": "parked", "type": "failure", "label": "Parked / DNC", "sublabel": "drop, no dial", "lane": "terminal", "col": 1, "tag": "PROV-O" }
+  ],
+  "transitions": [
+    { "id": "t-dial-noanswer", "from": "dialing", "to": "no_response", "variant": "default", "label": "no response" },
+    { "id": "t-noanswer-retry", "from": "no_response", "to": "retry_wait", "variant": "default", "label": "WA 'tried reaching'" },
+    { "id": "t-dial-failed", "from": "dialing", "to": "failed", "variant": "security", "fromSide": "left", "toSide": "left", "via": [[320, 157], [320, 385]] },
+    { "id": "t-failed-retry", "from": "failed", "to": "booked", "variant": "emphasis", "fromSide": "left", "toSide": "top", "via": [[20, 385], [20, 80], [402, 80]], "label": "retry 24h" },
+    { "id": "t-failed-wait", "from": "failed", "to": "retry_wait", "variant": "dashed" },
+    { "id": "t-retry-dial", "from": "retry_wait", "to": "dialing", "variant": "emphasis", "label": "retry call" },
+    { "id": "t-dial-notint", "from": "dialing", "to": "not_interested", "variant": "security", "label": "not interested" },
+    { "id": "t-notint-park", "from": "not_interested", "to": "parked", "variant": "security" },
+    { "id": "t-dial-interested", "from": "dialing", "to": "interested", "variant": "emphasis", "label": "interested" },
+    { "id": "t-interested-booked", "from": "interested", "to": "booked", "variant": "emphasis", "label": "info + link" },
+    { "id": "t-booked-reminder", "from": "booked", "to": "reminder", "variant": "default", "label": "30m reminder" },
+    { "id": "t-reminder-done", "from": "reminder", "to": "completed", "variant": "emphasis" },
+    { "id": "t-dial-booked", "from": "dialing", "to": "booked", "variant": "emphasis", "label": "booked" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Semantica Zero Leakage", "items": ["Every state = ContextGraph node + PROV-O edge", "Bi-temporal, policy gate, cross-border audit export"] },
+    { "dot": "amber", "title": "Retry Loop (24h)", "items": ["Picked no response → WA/Gmail 'tried reaching' → Wait 24h → retry dial", "Failed → Wait 24h → retry, full lineage preserved"] },
+    { "dot": "rose", "title": "Booking Path", "items": ["Interested → send info, handle query → meeting link → booked → 30m reminder call", "Not interested → Parked/DNC terminal, no further dial"] }
+  ]
+}
