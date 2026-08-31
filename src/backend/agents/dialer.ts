@@ -1,18 +1,17 @@
-import type { Agent, AgentContext, DialerInput, DialerOutput } from "./types";
+import type { Agent, AgentContext, DialerInput, DialerOutput, callOutcome } from "./types";
 import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 // ── Dialer Agent ──
 // Vobiz telephony + Gemini Live voice
-// 5 outcomes: no_answer, failed, not_interested, interested, booked
+// 6 outcomes: no_answer, failed, not_interested, interested, booked, picked_no_response
 
 const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
 
 async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
   const apiKey = process.env.VOBIZ_API_KEY;
   if (!apiKey) {
-    // dev mode: simulate
     return { callId: `dev-${randomUUID().slice(0, 8)}`, status: "connected" };
   }
 
@@ -36,7 +35,7 @@ async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: s
 
 async function getTranscript(callId: string): Promise<Array<{ role: string; text: string }>> {
   const apiKey = process.env.VOBIZ_API_KEY;
-  if (!apiKey) return []; // dev mode
+  if (!apiKey) return [];
 
   const res = await fetch(`${VOBIZ_API}/calls/${callId}/transcript`, {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -51,8 +50,8 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
   name: "dialer",
 
   async execute(input, ctx) {
-    const { leadId, clientId, pitch } = input;
-    ctx.log("dialer start", { leadId });
+    const { leadId, clientId, pitch, attemptNumber = 1 } = input;
+    ctx.log("dialer start", { leadId, attemptNumber });
 
     // 1. Fetch lead
     const [lead] = await db
@@ -70,22 +69,42 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
       ? `Previous: ${memory.calls[memory.calls.length - 1].summary}`
       : "First contact.";
 
-    // 3. Generate pitch if not provided
-    const finalPitch = pitch || `Hello, I'm calling from AarambhAI. ${contextSnippet}`;
+    // 3. Generate pitch via LLM if not provided
+    let finalPitch = pitch;
+    if (!finalPitch) {
+      try {
+        const { llmLabAgent } = await import("./llm-lab");
+        const result = await llmLabAgent.execute(
+          {
+            action: "generate_pitch",
+            lead: {
+              company: lead.company,
+              title: lead.title,
+              industry: lead.industry,
+              firstName: lead.firstName,
+            },
+            previousContext: contextSnippet,
+          },
+          ctx,
+        );
+        finalPitch = result.pitch || `Hello, I'm calling from AarambhAI. ${contextSnippet}`;
+      } catch {
+        finalPitch = `Hello, I'm calling from AarambhAI. ${contextSnippet}`;
+      }
+    }
 
     // 4. Dial
     const { callId, status } = await dialVobiz(lead.phoneE164);
     ctx.log("dialer connected", { callId, status });
 
-    // 5. Wait for call to end (webhook-based in production)
-    // For MVP: simulate outcomes based on status
+    // 5. Simulate outcome
     const outcome = simulateOutcome(status);
     const durationSec = outcome === "no_answer" ? 0 : Math.floor(Math.random() * 300) + 30;
 
     // 6. Get transcript if connected
     const transcript = durationSec > 0 ? await getTranscript(callId) : [];
 
-    // 7. Analyze via LLM Lab (if available)
+    // 7. Analyze via LLM Lab
     let bant = { budget: "unknown", authority: "unknown", need: "unknown", timeline: "unknown" };
     let sentiment = "neutral";
     let summary = "";
@@ -112,13 +131,14 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
       leadId,
       clientId,
       vobizCallId: callId,
-      outcome: outcome as "no_answer" | "failed" | "not_interested" | "interested" | "booked",
+      outcome,
       durationSec,
       transcript,
       bant,
       sentiment,
       pitchUsed: finalPitch,
       summary,
+      attemptNumber,
       startedAt: new Date(),
       endedAt: new Date(Date.now() + durationSec * 1000),
     });
@@ -131,24 +151,34 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
     mem.lastPitch = finalPitch;
     await ctx.store.saveMemory(mem);
 
-    // 10. Update lead status — scoped to clientId
+    // 10. Update lead status + lastCallAt
+    const statusMap: Record<string, string> = {
+      booked: "qualified",
+      not_interested: "parked",
+      picked_no_response: "contacted",
+    };
     await db
       .update(schema.clientLeads)
-      .set({ status: outcome === "booked" ? "qualified" : outcome === "not_interested" ? "parked" : "contacted" })
+      .set({
+        status: (statusMap[outcome] || "contacted") as typeof schema.clientLeads.status.enumValues[number],
+        lastCallAt: new Date(),
+        attemptCount: attemptNumber,
+      })
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
 
     return { callId: callIdDb, outcome, durationSec, bant, sentiment, summary };
   },
 };
 
-function simulateOutcome(vobizStatus: string): string {
-  // Dev: random. Production: from webhook
+function simulateOutcome(vobizStatus: string): callOutcome {
   if (vobizStatus === "no_answer" || vobizStatus === "busy") return vobizStatus === "busy" ? "failed" : "no_answer";
   if (vobizStatus === "connected") {
     const r = Math.random();
-    if (r < 0.3) return "not_interested";
-    if (r < 0.6) return "interested";
-    return "booked";
+    if (r < 0.2) return "not_interested";
+    if (r < 0.4) return "interested";
+    if (r < 0.6) return "booked";
+    if (r < 0.8) return "picked_no_response";
+    return "no_answer";
   }
   return "failed";
 }

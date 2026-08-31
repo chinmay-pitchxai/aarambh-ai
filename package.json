@@ -10,7 +10,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "scheduler": "npx tsx src/backend/scheduler.ts",
+    "seed:fresh": "npx tsx seed.ts"
   },
   "dependencies": {
     "@composio/core": "^0.17.0",
@@ -31,6 +33,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
+    "docx": "^9.7.1",
     "drizzle-kit": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"

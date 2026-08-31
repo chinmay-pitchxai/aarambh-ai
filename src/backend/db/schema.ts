@@ -1,8 +1,8 @@
-import { pgTable, text, integer, jsonb, timestamp, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, boolean, jsonb, timestamp, pgEnum, uniqueIndex, index } from "drizzle-orm/pg-core";
 
 export const leadBand = pgEnum("lead_band", ["hot", "warm", "interested", "cold"]);
-export const leadStatus = pgEnum("lead_status", ["new", "contacted", "qualified", "converted", "parked", "dnc"]);
-export const callOutcome = pgEnum("call_outcome", ["no_answer", "failed", "not_interested", "interested", "booked"]);
+export const leadStatus = pgEnum("lead_status", ["new", "contacted", "qualified", "converted", "booked", "parked", "dnc", "lost"]);
+export const callOutcome = pgEnum("call_outcome", ["no_answer", "failed", "not_interested", "interested", "booked", "picked_no_response"]);
 export const consentStatus = pgEnum("consent_status", ["opted_in", "opted_out", "unknown"]);
 
 // ── Mother Leads DB (global, cross-client) ──
@@ -40,6 +40,10 @@ export const clientLeads = pgTable("client_leads", {
   band: leadBand("band"),
   status: leadStatus("status").default("new"),
   assignedAt: timestamp("assigned_at").defaultNow(),
+  attemptCount: integer("attempt_count").default(0),
+  lastCallAt: timestamp("last_call_at"),
+  nextRetryAt: timestamp("next_retry_at"),
+  lostAt: timestamp("lost_at"),
 }, (t) => [
   uniqueIndex("idx_client_lead").on(t.clientId, t.leadId),
   index("idx_client_status").on(t.clientId, t.status),
@@ -60,6 +64,7 @@ export const calls = pgTable("calls", {
   summary: text("summary"),
   startedAt: timestamp("started_at"),
   endedAt: timestamp("ended_at"),
+  attemptNumber: integer("attempt_number").default(1),
 }, (t) => [
   index("idx_calls_lead").on(t.leadId),
   index("idx_calls_client").on(t.clientId),
@@ -151,4 +156,37 @@ export const oauthConnections = pgTable("oauth_connections", {
 }, (t) => [
   uniqueIndex("idx_oauth_client_integration").on(t.clientId, t.integration),
   index("idx_oauth_status").on(t.status),
+]);
+
+export const bookings = pgTable("bookings", {
+  id: text("id").primaryKey(),
+  leadId: text("lead_id").notNull(),
+  clientId: text("client_id").notNull(),
+  callId: text("call_id"),
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  durationMin: integer("duration_min").default(30),
+  status: text("status").default("scheduled"), // scheduled | confirmed | completed | cancelled | no_show
+  reminderDayBeforeSent: boolean("reminder_day_before_sent").default(false),
+  reminderDayOfSent: boolean("reminder_day_of_sent").default(false),
+  meetingUrl: text("meeting_url"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_bookings_client_status").on(t.clientId, t.status),
+  index("idx_bookings_scheduled").on(t.scheduledAt),
+]);
+
+// ── Inbound Messages ──
+export const inboundMessages = pgTable("inbound_messages", {
+  id: text("id").primaryKey(),
+  leadId: text("lead_id").notNull(),
+  clientId: text("client_id").notNull(),
+  channel: text("channel").notNull(),       // "whatsapp" | "email"
+  body: text("body"),
+  detectedInterest: boolean("detected_interest").default(false),
+  processedAt: timestamp("processed_at"),
+  receivedAt: timestamp("received_at").defaultNow(),
+}, (t) => [
+  index("idx_inbound_lead").on(t.leadId),
+  index("idx_inbound_client").on(t.clientId),
 ]);

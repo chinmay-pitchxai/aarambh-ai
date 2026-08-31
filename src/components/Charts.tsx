@@ -302,7 +302,7 @@ function GaugeChart({
           strokeDasharray={`${(pct / 100) * 2 * Math.PI * r} ${2 * Math.PI * r}`}
           strokeDashoffset={0}
           strokeLinecap="round"
-          transform={`rotate(-135 ${size / 2} ${size / 2)}`}
+          transform={`rotate(-135 ${size / 2} ${size / 2})`}
           style={{ transition: "stroke-dasharray 0.5s" }}
         />
       </svg>

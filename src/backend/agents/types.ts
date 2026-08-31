@@ -1,8 +1,6 @@
 import { z } from "zod";
 
 // ── Agent Protocol ──
-// Every agent implements this interface.
-// Agents are stateless — all mutable state lives in ContextStore (Redis).
 
 export interface Agent<I = unknown, O = unknown> {
   name: string;
@@ -18,18 +16,33 @@ export interface AgentContext {
 }
 
 // ── Message Bus ──
-// Typed pub/sub for agent-to-agent communication.
-// In-memory for MVP, swap to Redis pub/sub for multi-process.
 
 export type AgentMessage =
   | { type: "lead.enriched"; leadId: string; clientId: string; data: unknown }
   | { type: "lead.scored"; leadId: string; clientId: string; score: number; band: string }
+  | { type: "lead.lost"; leadId: string; clientId: string }
   | { type: "consent.checked"; leadId: string; clientId: string; approved: boolean }
   | { type: "call.started"; leadId: string; clientId: string; callId: string }
   | { type: "call.ended"; leadId: string; clientId: string; callId: string; outcome: string }
   | { type: "message.sent"; leadId: string; clientId: string; channel: string }
   | { type: "meeting.booked"; leadId: string; clientId: string }
+  | { type: "meeting.cancelled"; leadId: string; clientId: string }
+  | { type: "meeting.completed"; leadId: string; clientId: string }
+  | { type: "meeting.no_show"; leadId: string; clientId: string }
   | { type: "retry.scheduled"; leadId: string; clientId: string; nextAttemptAt: string }
+  | { type: "reminder.day_before"; leadId: string; clientId: string; meetingId: string }
+  | { type: "reminder.day_of"; leadId: string; clientId: string; meetingId: string }
+  | { type: "reply.interested"; leadId: string; clientId: string }
+  | { type: "reply.not_interested"; leadId: string; clientId: string }
+  | { type: "reply.neutral"; leadId: string; clientId: string }
+  | { type: "reply.timeout"; leadId: string; clientId: string }
+  | { type: "outcome.interested"; leadId: string; clientId: string; callId: string }
+  | { type: "outcome.not_interested"; leadId: string; clientId: string; callId: string }
+  | { type: "outcome.no_answer"; leadId: string; clientId: string; callId: string }
+  | { type: "outcome.busy"; leadId: string; clientId: string; callId: string }
+  | { type: "outcome.failed"; leadId: string; clientId: string; callId: string }
+  | { type: "outcome.picked_no_response"; leadId: string; clientId: string; callId: string }
+  | { type: "outcome.booked"; leadId: string; clientId: string; callId: string }
   | { type: "error"; leadId?: string; clientId?: string; agent: string; error: string };
 
 export type MessageHandler = (msg: AgentMessage) => void | Promise<void>;
@@ -40,7 +53,6 @@ export interface MessageBus {
 }
 
 // ── Context Store ──
-// Key-value store per lead — holds conversation state, scores, transcripts.
 
 export interface ContextStore {
   get<T = unknown>(key: string): Promise<T | null>;
@@ -52,15 +64,34 @@ export interface ContextStore {
 
 export interface LeadMemory {
   leadId: string;
-  calls: Array<{ callId: string; outcome: string; summary: string; bant: unknown; at: string }>;
+  calls: Array<{ callId: string; outcome: string; summary: string; bant: BANT; at: string }>;
   messages: Array<{ channel: string; body: string; direction: string; at: string }>;
   lastPitch: string | null;
   lastSentiment: string | null;
   totalAttempts: number;
 }
 
+// ── BANT ──
+
+export interface BANT {
+  budget: string;
+  authority: string;
+  need: string;
+  timeline: string;
+}
+
+// ── Booking ──
+
+export interface BookingInput {
+  leadId: string;
+  clientId: string;
+  scheduledAt: Date;
+  durationMin?: number;
+  meetingUrl?: string;
+  notes?: string;
+}
+
 // ── Pipeline ──
-// Orchestrates the full flow: Scout → Ranker → Consent → Dialer → Nudge
 
 export type PipelineStage =
   | "scout"
@@ -72,7 +103,8 @@ export type PipelineStage =
   | "retry"
   | "booked"
   | "parked"
-  | "dlq";
+  | "dlq"
+  | "lost";
 
 export interface PipelineResult {
   leadId: string;
@@ -82,6 +114,26 @@ export interface PipelineResult {
   error?: string;
   durationMs: number;
 }
+
+// ── Call Outcome / Lead Status enums ──
+
+export type callOutcome =
+  | "interested"
+  | "not_interested"
+  | "no_answer"
+  | "failed"
+  | "picked_no_response"
+  | "booked";
+
+export type leadStatus =
+  | "new"
+  | "contacted"
+  | "qualified"
+  | "converted"
+  | "booked"
+  | "parked"
+  | "dnc"
+  | "lost";
 
 // ── Input/Output types for each agent ──
 
@@ -124,13 +176,14 @@ export interface DialerInput {
   leadId: string;
   clientId: string;
   pitch?: string;
+  attemptNumber?: number;
 }
 
 export interface DialerOutput {
   callId: string;
-  outcome: string;
+  outcome: callOutcome;
   durationSec: number;
-  bant: unknown;
+  bant: BANT;
   sentiment: string;
   summary: string;
 }
@@ -140,7 +193,7 @@ export interface NudgeInput {
   clientId: string;
   callId: string;
   outcome: string;
-  bant: unknown;
+  bant: BANT;
 }
 
 export interface NudgeOutput {

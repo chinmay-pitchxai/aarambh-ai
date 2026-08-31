@@ -6,6 +6,7 @@ import { consentAgent } from "@/backend/agents/consent";
 import { dialerAgent } from "@/backend/agents/dialer";
 import { nudgeAgent } from "@/backend/agents/nudge";
 
+
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -51,7 +52,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 3. Run per-lead pipeline: Consent → Dialer → Nudge
+  // 3. Run per-lead pipeline: Consent → Dialer → Nudge → Outcome Router
   const results = await pipeline.runBatch(scoutResult.leadIds, clientId);
 
   return NextResponse.json({

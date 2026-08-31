@@ -43,16 +43,74 @@ async function sendWhatsApp(phoneE164: string, templateName: string, params: str
   return data.messages?.[0]?.id || null;
 }
 
-async function sendGmail(to: string, subject: string, body: string): Promise<string | null> {
+async function refreshGmailToken(): Promise<string> {
   const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
   const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
-  if (!clientId || !refreshToken) {
+  if (!clientId || !clientSecret || !refreshToken) throw new Error("Gmail OAuth env vars missing");
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Gmail token refresh failed: ${res.status}`);
+  const data = await res.json();
+  return data.access_token;
+}
+
+async function sendGmail(to: string, subject: string, htmlBody: string): Promise<string | null> {
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) {
     console.log(`[GMAIL-STUB] To: ${to}, Subject: ${subject}`);
     return `gmail-stub-${randomUUID().slice(0, 8)}`;
   }
 
-  // TODO: implement real Gmail API with OAuth token refresh
-  return null;
+  try {
+    const accessToken = await refreshGmailToken();
+
+    const mimeMessage = [
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      "MIME-Version: 1.0",
+      'Content-Type: text/html; charset="UTF-8"',
+      "",
+      htmlBody,
+    ].join("\r\n");
+
+    const encodedMessage = Buffer.from(mimeMessage)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/, "");
+
+    const res = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ raw: encodedMessage }),
+    });
+
+    if (!res.ok) {
+      console.error(`Gmail send failed: ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    return data.id || null;
+  } catch (err) {
+    console.error("Gmail send error:", err);
+    return null;
+  }
 }
 
 const TEMPLATES = {
@@ -84,7 +142,6 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
     switch (outcome) {
       case "no_answer":
       case "failed": {
-        // Send "tried reaching" WhatsApp
         const waId = await sendWhatsApp(
           lead.phoneE164,
           TEMPLATES.tried_reaching,
@@ -92,7 +149,6 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
         );
         if (waId) messagesSent++;
 
-        // Store message
         await db.insert(schema.messages).values({
           id: randomUUID(),
           leadId,
@@ -102,12 +158,13 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
           direction: "outbound",
           body: `Tried reaching you, ${lead.firstName || "not able to connect"}. Will call again in 24 hours.`,
           waMessageId: waId,
+          templateName: TEMPLATES.tried_reaching,
         });
         break;
       }
 
-      case "interested": {
-        // Send info + meeting link
+      case "picked_no_response": {
+        // Send WA info template with product details
         const waId = await sendWhatsApp(
           lead.phoneE164,
           TEMPLATES.info_send,
@@ -115,18 +172,78 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
         );
         if (waId) messagesSent++;
 
-        // Also email
+        // Send Gmail with full product info
         let gmailId: string | null = null;
         if (lead.email) {
+          const productHtml = `
+            <h2>AarambhAI - Product Information</h2>
+            <p>Hi ${lead.firstName || ""},</p>
+            <p>We tried reaching you over a call. Since you weren't available, here's some information about what we offer:</p>
+            <ul>
+              <li>AI-powered lead qualification</li>
+              <li>Automated follow-up sequences</li>
+              <li>Real-time conversation analytics</li>
+            </ul>
+            <p>Book a quick demo: <a href="${process.env.NEXT_PUBLIC_APP_URL}/book/${leadId}">Schedule Meeting</a></p>
+          `;
           gmailId = await sendGmail(
             lead.email,
-            "AarambhAI — Following up on our conversation",
-            `Hi ${lead.firstName || ""},\n\nThanks for your interest. Here's the information we discussed.\n\nBook a meeting: ${process.env.NEXT_PUBLIC_APP_URL}/book/${leadId}`,
+            "AarambhAI — Here's the information we discussed",
+            productHtml,
           );
           if (gmailId) messagesSent++;
         }
 
-        // Store messages — whatsapp + gmail separately
+        await db.insert(schema.messages).values({
+          id: randomUUID(),
+          leadId,
+          clientId,
+          callId,
+          channel: "whatsapp",
+          direction: "outbound",
+          body: `Info sent for ${lead.company || "company"} (picked_no_response follow-up)`,
+          waMessageId: waId,
+          templateName: TEMPLATES.info_send,
+        });
+        if (gmailId) {
+          await db.insert(schema.messages).values({
+            id: randomUUID(),
+            leadId,
+            clientId,
+            callId,
+            channel: "gmail",
+            direction: "outbound",
+            body: `Product info email sent to ${lead.email}`,
+            gmailThreadId: gmailId,
+          });
+        }
+        break;
+      }
+
+      case "interested": {
+        const waId = await sendWhatsApp(
+          lead.phoneE164,
+          TEMPLATES.info_send,
+          [lead.firstName || "there", lead.company || "your team"],
+        );
+        if (waId) messagesSent++;
+
+        let gmailId: string | null = null;
+        if (lead.email) {
+          const interestHtml = `
+            <h2>AarambhAI — Thanks for your interest!</h2>
+            <p>Hi ${lead.firstName || ""},</p>
+            <p>Thanks for your interest. Here's the information we discussed.</p>
+            <p>Book a meeting: <a href="${process.env.NEXT_PUBLIC_APP_URL}/book/${leadId}">Schedule Meeting</a></p>
+          `;
+          gmailId = await sendGmail(
+            lead.email,
+            "AarambhAI — Following up on our conversation",
+            interestHtml,
+          );
+          if (gmailId) messagesSent++;
+        }
+
         await db.insert(schema.messages).values({
           id: randomUUID(),
           leadId,
@@ -136,6 +253,7 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
           direction: "outbound",
           body: `Info sent + meeting link for ${lead.company || "company"}`,
           waMessageId: waId,
+          templateName: TEMPLATES.info_send,
         });
         if (gmailId) {
           await db.insert(schema.messages).values({
@@ -153,7 +271,6 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
       }
 
       case "booked": {
-        // Send meeting confirmation
         const waId = await sendWhatsApp(
           lead.phoneE164,
           TEMPLATES.meeting_link,
@@ -171,6 +288,7 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
           direction: "outbound",
           body: "Meeting booked, confirmation sent",
           waMessageId: waId,
+          templateName: TEMPLATES.meeting_link,
         });
         break;
       }
@@ -186,7 +304,10 @@ export const nudgeAgent: Agent<NudgeInput, NudgeOutput> = {
       }
     }
 
-    ctx.bus.publish({ type: "message.sent", leadId, clientId, channel: "whatsapp" });
+    // Only publish if messages were actually sent
+    if (messagesSent > 0) {
+      ctx.bus.publish({ type: "message.sent", leadId, clientId, channel: "whatsapp" });
+    }
 
     return { messagesSent, meetingBooked };
   },
