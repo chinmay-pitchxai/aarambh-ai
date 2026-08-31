@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AarambhAI — Production Architecture Blueprint",
+    "subtitle": "Current state vs. production-ready multi-tenant SaaS",
+    "output": "aarambh-ai-architecture.html",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "full-system", "label": "Full System", "focus": ["landing", "auth", "onboarding", "pipeline", "dialer", "summary", "payments"], "note": "Complete production flow from landing page to revenue." }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "cols": 4,
+    "gapX": 140,
+    "gapY": 120,
+    "cellW": 160,
+    "cellH": 60
+  },
+  "components": [
+    { "id": "landing", "type": "frontend", "label": "Landing Page", "sublabel": "Marketing Site", "row": 0, "col": 0, "tag": "EXISTS" },
+    { "id": "auth", "type": "security", "label": "Authentication", "sublabel": "Email + Google OAuth", "row": 0, "col": 1, "tag": "BUILD" },
+    { "id": "onboarding", "type": "frontend", "label": "Onboarding", "sublabel": "Business Profile + ICP", "row": 0, "col": 2, "tag": "BUILD" },
+    { "id": "apollo", "type": "external", "label": "Apollo API", "sublabel": "Lead Sourcing", "row": 0, "col": 3, "tag": "STUB" },
+    { "id": "dashboard", "type": "frontend", "label": "Dashboard", "sublabel": "KPIs + Funnel", "row": 1, "col": 0, "tag": "EXISTS" },
+    { "id": "leads", "type": "frontend", "label": "Leads Board", "sublabel": "Kanban + ICP Tab", "row": 1, "col": 1, "tag": "EXISTS" },
+    { "id": "pipeline", "type": "backend", "label": "Pipeline", "sublabel": "14 AI Agents", "row": 1, "col": 2, "tag": "EXISTS" },
+    { "id": "dialer", "type": "backend", "label": "Dialer", "sublabel": "Vobiz Telephony", "row": 1, "col": 3, "tag": "EXISTS" },
+    { "id": "payments", "type": "security", "label": "Razorpay", "sublabel": "Payments + Plans", "row": 2, "col": 0, "tag": "BUILD" },
+    { "id": "memory", "type": "database", "label": "Lead Memory", "sublabel": "PostgreSQL + Redis", "row": 2, "col": 1, "tag": "EXISTS" },
+    { "id": "summary", "type": "backend", "label": "AI Analysis", "sublabel": "BANT + Next Action", "row": 2, "col": 2, "tag": "PARTIAL" },
+    { "id": "transcript", "type": "backend", "label": "Transcription", "sublabel": "Speaker Segments", "row": 2, "col": 3, "tag": "BUILD" },
+    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "Drizzle ORM", "row": 3, "col": 0, "tag": "EXISTS" },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "Cache + Queue", "row": 3, "col": 1, "tag": "EXISTS" },
+    { "id": "whatsapp", "type": "external", "label": "WhatsApp", "sublabel": "Business API", "row": 3, "col": 2, "tag": "EXISTS" },
+    { "id": "gemini", "type": "external", "label": "Gemini", "sublabel": "LLM (2.5 Flash)", "row": 3, "col": 3, "tag": "EXISTS" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "AarambhAI SaaS Platform", "wraps": ["landing", "auth", "onboarding", "dashboard", "leads", "pipeline", "dialer", "payments", "memory", "summary", "transcript", "db", "redis"], "pad": 16 }
+  ],
+  "connections": [
+    { "id": "c1", "from": "landing", "to": "auth", "variant": "emphasis" },
+    { "id": "c2", "from": "auth", "to": "onboarding" },
+    { "id": "c3", "from": "onboarding", "to": "apollo" },
+    { "id": "c5", "from": "leads", "to": "pipeline", "variant": "emphasis" },
+    { "id": "c6", "from": "pipeline", "to": "dialer" },
+    { "id": "c10", "from": "transcript", "to": "summary" },
+    { "id": "c11", "from": "summary", "to": "memory" },
+    { "id": "c12", "from": "payments", "to": "leads", "variant": "dashed" },
+
+    { "id": "c15", "from": "db", "to": "redis", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "EXISTS (80% Complete)", "items": ["14 AI agents with typed protocols", "Pipeline orchestrator + retry + reminders", "Vobiz telephony + WhatsApp + Gmail", "Gemini LLM for analysis + BANT", "PostgreSQL 11-table schema + Redis"] },
+    { "dot": "rose", "title": "BUILD (20% Remaining)", "items": ["Auth: NextAuth + Google OAuth + RBAC", "Payments: Razorpay order + webhook", "Apollo: Real API integration (stub)", "Recordings: S3 storage + waveform", "Multi-tenant: orgId isolation on all queries"] },
+    { "dot": "cyan", "title": "Phase Plan", "items": ["Phase 1: Auth + Multi-tenancy", "Phase 2: Onboarding + ICP + Apollo", "Phase 3: Razorpay + Subscriptions", "Phase 4: Recordings + Transcripts", "Phase 5: Hardening + Tests"] }
+  ]
+}
