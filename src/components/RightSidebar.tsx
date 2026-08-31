@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 
 interface Msg { role: "user" | "agent"; text: string }
 
@@ -10,6 +10,11 @@ export default function RightSidebar({ open, onClose }: { open: boolean; onClose
   ]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [msgs]);
 
   async function send() {
     const text = input.trim();
@@ -44,8 +49,9 @@ export default function RightSidebar({ open, onClose }: { open: boolean; onClose
 
   return (
     <aside style={{
-      width: 360, minHeight: "100vh", background: "var(--surface)", borderLeft: "1px solid var(--border)",
+      width: 360, height: "100vh", background: "var(--surface)", borderLeft: "1px solid var(--border)",
       position: "fixed", right: 0, top: 0, zIndex: 50, display: "flex", flexDirection: "column",
+      overflow: "hidden",
     }}>
       <div style={{ padding: "20px 20px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
@@ -67,6 +73,7 @@ export default function RightSidebar({ open, onClose }: { open: boolean; onClose
             {m.text}
           </div>
         ))}
+        <div ref={messagesEndRef} />
       </div>
 
       <div style={{ padding: 12, borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
