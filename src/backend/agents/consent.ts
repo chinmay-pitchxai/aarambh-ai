@@ -32,10 +32,16 @@ export const consentAgent: Agent<ConsentInput, ConsentOutput> = {
       .limit(1);
 
     if (consentRow?.status === "opted_out") {
+      ctx.log("consent opted_out", { leadId, reason: consentRow.source || "unknown" });
       return { approved: false, reason: "client_opted_out" };
     }
 
     if (consentRow?.status === "opted_in") {
+      // Update checkedAt timestamp
+      await db
+        .update(schema.consent)
+        .set({ checkedAt: new Date() })
+        .where(and(eq(schema.consent.leadId, leadId), eq(schema.consent.clientId, clientId)));
       return { approved: true, reason: "opted_in" };
     }
 

@@ -1,11 +1,15 @@
 import type { Agent, AgentContext, MessageBus, ContextStore, PipelineResult, PipelineStage } from "./types";
 import { createMemoryBus } from "./bus";
 import { createRedisStore, type RedisStore } from "./context";
+import { routeOutcome, getRetryDelay } from "./outcome-router";
 
 // ── Pipeline Orchestrator ──
-// Per-lead: Consent → Dialer → Nudge (with retry/parked/booked routing)
+// Per-lead: Consent → Dialer → Nudge (with retry/parked/booked/lost routing)
 // Batch orchestration (Scout → Ranker) lives in /api/run
 // Error handling: failures go to DLQ, transient errors retry via queue
+// Max 3 attempts before marking lead as lost
+
+const MAX_ATTEMPTS = 3;
 
 export interface PipelineConfig {
   bus?: MessageBus;
@@ -50,7 +54,6 @@ export function createPipeline(config: PipelineConfig) {
     }
   }
 
-  // run full pipeline for one lead
   async function runLead(leadId: string, clientId: string, pitch?: string): Promise<PipelineResult> {
     const t0 = Date.now();
     const ctx = makeCtx(leadId, clientId);
@@ -75,56 +78,85 @@ export function createPipeline(config: PipelineConfig) {
 
     bus.publish({ type: "call.ended", leadId, clientId, callId: dial.callId, outcome: dial.outcome });
 
-    // 3. Route by outcome
-    switch (dial.outcome) {
-      case "no_answer":
-      case "failed": {
-        const next = new Date(Date.now() + 24 * 60 * 60 * 1000);
-        // Persist retry so it survives restart
-        try {
-          const { db, schema } = await import("../db");
-          const { randomUUID } = await import("crypto");
-          await db.insert(schema.retryQueue).values({
-            id: randomUUID(),
-            leadId,
-            clientId,
-            callId: dial.callId,
-            reason: dial.outcome,
-            nextAttemptAt: next,
-          });
-        } catch {
-          ctx.log("retryQueue insert failed");
-        }
-        bus.publish({ type: "retry.scheduled", leadId, clientId, nextAttemptAt: next.toISOString() });
-        return { leadId, clientId, stage: "retry", outcome: dial.outcome, durationMs: Date.now() - t0 };
+    // 3. Route by outcome via outcome-router
+    const routeResult = await routeOutcome(leadId, clientId, dial.callId, dial.outcome as any, ctx);
+    const { nextAction } = routeResult;
+
+    // Handle retry action
+    if (nextAction === "retry") {
+      // Read current attempt count from store
+      let attemptCount = 0;
+      try {
+        attemptCount = (await ctx.store.get<number>(`lead:${leadId}:attempts`)) ?? 0;
+      } catch {
+        ctx.log("failed to read attemptCount, defaulting to 0");
       }
-      case "not_interested":
-        return { leadId, clientId, stage: "parked", outcome: dial.outcome, durationMs: Date.now() - t0 };
-      case "interested":
-      case "booked": {
-        // nudge sends info + meeting link
-        const nudgeResult = await runStage(
-          config.agents.nudge,
-          { leadId, clientId, callId: dial.callId, outcome: dial.outcome, bant: dial.bant },
-          ctx,
-          "nudge",
-        );
-        if ("error" in nudgeResult) {
-          return { leadId, clientId, stage: "dlq", error: nudgeResult.error, durationMs: Date.now() - t0 };
-        }
-        const nudge = nudgeResult.output as { meetingBooked: boolean };
-        if (nudge.meetingBooked) {
-          bus.publish({ type: "meeting.booked", leadId, clientId });
-          return { leadId, clientId, stage: "booked", outcome: "booked", durationMs: Date.now() - t0 };
-        }
-        return { leadId, clientId, stage: "nudge", outcome: "info_sent", durationMs: Date.now() - t0 };
+      attemptCount += 1;
+
+      if (attemptCount >= MAX_ATTEMPTS) {
+        bus.publish({ type: "lead.lost", leadId, clientId });
+        return { leadId, clientId, stage: "lost", outcome: dial.outcome, durationMs: Date.now() - t0 };
       }
-      default:
-        return { leadId, clientId, stage: "dlq", outcome: dial.outcome, error: "unknown outcome", durationMs: Date.now() - t0 };
+
+      const delayMs = getRetryDelay(attemptCount);
+      const nextAttemptAt = new Date(Date.now() + delayMs);
+
+      // Persist attempt count and retry entry
+      try {
+        await ctx.store.set(`lead:${leadId}:attempts`, attemptCount);
+        const { db, schema } = await import("../db");
+        const { randomUUID } = await import("crypto");
+        await db.insert(schema.retryQueue).values({
+          id: randomUUID(),
+          leadId,
+          clientId,
+          callId: dial.callId,
+          reason: dial.outcome,
+          nextAttemptAt,
+        });
+      } catch {
+        ctx.log("retryQueue insert failed");
+      }
+
+      bus.publish({ type: "retry.scheduled", leadId, clientId, nextAttemptAt: nextAttemptAt.toISOString() });
+      return { leadId, clientId, stage: "retry", outcome: dial.outcome, durationMs: Date.now() - t0 };
     }
+
+    // Handle nudge action
+    if (nextAction === "wait_reply") {
+      const nudgeResult = await runStage(
+        config.agents.nudge,
+        { leadId, clientId, callId: dial.callId, outcome: dial.outcome, bant: dial.bant },
+        ctx,
+        "nudge",
+      );
+      if ("error" in nudgeResult) {
+        return { leadId, clientId, stage: "dlq", error: nudgeResult.error, durationMs: Date.now() - t0 };
+      }
+      const nudge = nudgeResult.output as { meetingBooked: boolean };
+      if (nudge.meetingBooked) {
+        bus.publish({ type: "meeting.booked", leadId, clientId });
+        return { leadId, clientId, stage: "booked", outcome: "booked", durationMs: Date.now() - t0 };
+      }
+      return { leadId, clientId, stage: "nudge", outcome: "info_sent", durationMs: Date.now() - t0 };
+    }
+
+    // Handle confirm_booking action
+    if (nextAction === "confirm_booking") {
+      return { leadId, clientId, stage: "booked", outcome: "booked", durationMs: Date.now() - t0 };
+    }
+
+    // Handle lost
+    if (nextAction === "lost") {
+      bus.publish({ type: "lead.lost", leadId, clientId });
+      return { leadId, clientId, stage: "lost", outcome: dial.outcome, durationMs: Date.now() - t0 };
+    }
+
+    // Default
+    return { leadId, clientId, stage: "dlq", error: `unknown nextAction: ${nextAction}`, durationMs: Date.now() - t0 };
   }
 
-  // batch: run multiple leads
+  // batch: run multiple leads sequentially
   async function runBatch(leadIds: string[], clientId: string): Promise<PipelineResult[]> {
     const results: PipelineResult[] = [];
     for (const leadId of leadIds) {
