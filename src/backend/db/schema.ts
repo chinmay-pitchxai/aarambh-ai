@@ -4,6 +4,8 @@ export const leadBand = pgEnum("lead_band", ["hot", "warm", "interested", "cold"
 export const leadStatus = pgEnum("lead_status", ["new", "contacted", "qualified", "converted", "booked", "parked", "dnc", "lost"]);
 export const callOutcome = pgEnum("call_outcome", ["no_answer", "failed", "not_interested", "interested", "booked", "picked_no_response"]);
 export const consentStatus = pgEnum("consent_status", ["opted_in", "opted_out", "unknown"]);
+export const subscriptionStatus = pgEnum("subscription_status", ["active", "trialing", "past_due", "canceled", "expired"]);
+export const membershipRole = pgEnum("membership_role", ["owner", "admin", "member", "viewer"]);
 
 // ── Mother Leads DB (global, cross-client) ──
 export const leads = pgTable("leads", {
@@ -189,4 +191,84 @@ export const inboundMessages = pgTable("inbound_messages", {
 }, (t) => [
   index("idx_inbound_lead").on(t.leadId),
   index("idx_inbound_client").on(t.clientId),
+]);
+
+// ── Auth Tables ──
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash"),  // null for Google-only users
+  name: text("name"),
+  avatarUrl: text("avatar_url"),
+  emailVerifiedAt: timestamp("email_verified_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_users_email").on(t.email),
+]);
+
+export const oauthAccounts = pgTable("oauth_accounts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  providerAccountId: text("provider_account_id").notNull(),
+  email: text("email"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("idx_accounts_provider").on(t.provider, t.providerAccountId),
+  index("idx_accounts_user").on(t.userId),
+]);
+
+export const sessions = pgTable("sessions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  activeOrganizationId: text("active_organization_id").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  lastSeenAt: timestamp("last_seen_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_sessions_user").on(t.userId),
+  index("idx_sessions_expires").on(t.expiresAt),
+]);
+
+export const organizations = pgTable("organizations", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").unique(),
+  onboardingCompletedAt: timestamp("onboarding_completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const organizationMembers = pgTable("organization_members", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: membershipRole("role").default("member"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("idx_org_member").on(t.organizationId, t.userId),
+]);
+
+export const businessProfiles = pgTable("business_profiles", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  companyName: text("company_name"),
+  location: text("location"),
+  category: text("category"),
+  description: text("description"),
+  website: text("website"),
+  industry: text("industry"),
+  profileData: jsonb("profile_data"),
+  researchStatus: text("research_status").default("pending"),
+  researchSources: jsonb("research_sources"),
+  confidenceScore: integer("confidence_score"),
+  lastResearchedAt: timestamp("last_researched_at"),
+  rawResearchData: jsonb("raw_research_data"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("idx_biz_org").on(t.organizationId),
 ]);

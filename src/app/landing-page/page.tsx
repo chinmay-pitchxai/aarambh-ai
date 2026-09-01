@@ -51,7 +51,7 @@ export default function LandingPage() {
             </p>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
               <Link
-                href="/dashboard"
+                href="/auth/login"
                 style={{
                   background: "var(--accent)", color: "#fff", textDecoration: "none",
                   padding: "14px 32px", fontSize: 14, borderRadius: 10, fontWeight: 500,
@@ -297,7 +297,7 @@ export default function LandingPage() {
           </p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
             <Link
-              href="/dashboard"
+              href="/auth/login"
               style={{
                 background: "#fff", color: "var(--terracotta)", textDecoration: "none",
                 padding: "14px 32px", fontSize: 14, borderRadius: 10, fontWeight: 600,

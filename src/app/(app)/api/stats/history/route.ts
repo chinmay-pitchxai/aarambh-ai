@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
     .from(schema.calls)
     .where(
       clientId
-        ? sql`${eq(schema.calls.clientId, clientId)} AND ${gte(schema.calls.startedAt, startDate.toISOString())}`
-        : gte(schema.calls.startedAt, startDate.toISOString())
+        ? sql`${eq(schema.calls.clientId, clientId)} AND ${gte(schema.calls.startedAt, startDate)}`
+        : gte(schema.calls.startedAt, startDate)
     )
     .orderBy(desc(schema.calls.startedAt));
 
@@ -46,8 +46,8 @@ export async function GET(req: NextRequest) {
     .from(schema.clientLeads)
     .where(
       clientId
-        ? sql`${eq(schema.clientLeads.clientId, clientId)} AND ${gte(schema.clientLeads.assignedAt, startDate.toISOString())}`
-        : gte(schema.clientLeads.assignedAt, startDate.toISOString())
+        ? sql`${eq(schema.clientLeads.clientId, clientId)} AND ${gte(schema.clientLeads.assignedAt, startDate)}`
+        : gte(schema.clientLeads.assignedAt, startDate)
     )
     .orderBy(desc(schema.clientLeads.assignedAt));
 
