@@ -65,25 +65,73 @@ const BAND_COLORS: Record<string, string> = {
 };
 
 function PieChart({ data, colors }: { data: { label: string; value: number }[]; colors: Record<string, string> }) {
+  const [hovered, setHovered] = useState<number | null>(null);
   const total = data.reduce((s, d) => s + d.value, 0);
   if (total === 0) return <div style={{ width: 180, height: 180, borderRadius: "50%", background: "var(--surface-2)", border: "1px dashed var(--border)" }} />;
   let acc = 0;
-  const slices = data.map((d) => {
+  const slices = data.map((d, i) => {
     const start = acc;
     const angle = (d.value / total) * 360;
     acc += angle;
+    const midAngle = start + angle / 2;
     const x1 = 80 + 70 * Math.cos((start - 90) * Math.PI / 180);
     const y1 = 80 + 70 * Math.sin((start - 90) * Math.PI / 180);
     const x2 = 80 + 70 * Math.cos((start + angle - 90) * Math.PI / 180);
     const y2 = 80 + 70 * Math.sin((start + angle - 90) * Math.PI / 180);
     const large = angle > 180 ? 1 : 0;
-    return { ...d, d: `M80,80 L${x1},${y1} A70,70 0 ${large},1 ${x2},${y2} Z`, color: colors[d.label] || "#E8E0D5" };
+    const tooltipX = 80 + 45 * Math.cos((midAngle - 90) * Math.PI / 180);
+    const tooltipY = 80 + 45 * Math.sin((midAngle - 90) * Math.PI / 180);
+    return { ...d, d: `M80,80 L${x1},${y1} A70,70 0 ${large},1 ${x2},${y2} Z`, color: colors[d.label] || "#E8E0D5", tooltipX, tooltipY, index: i };
   });
   return (
-    <svg width="180" height="180" viewBox="0 0 160 160">
-      {slices.map((s) => <path key={s.label} d={s.d} fill={s.color} stroke="var(--surface)" strokeWidth="2" />)}
-      <circle cx="80" cy="80" r="32" fill="var(--surface)" />
-    </svg>
+    <div style={{ position: "relative", width: 180, height: 180 }}>
+      <svg width="180" height="180" viewBox="0 0 160 160">
+        {slices.map((s) => (
+          <path
+            key={s.label}
+            d={s.d}
+            fill={s.color}
+            stroke="var(--surface)"
+            strokeWidth="2"
+            style={{
+              cursor: "pointer",
+              opacity: hovered === null || hovered === s.index ? 1 : 0.5,
+              transform: hovered === s.index ? "scale(1.03)" : "scale(1)",
+              transformOrigin: "80px 80px",
+              transition: "opacity 0.15s, transform 0.15s",
+            }}
+            onMouseEnter={() => setHovered(s.index)}
+            onMouseLeave={() => setHovered(null)}
+          />
+        ))}
+        <circle cx="80" cy="80" r="32" fill="var(--surface)" />
+        {hovered !== null && slices[hovered] && slices[hovered].value > 0 && (
+          <>
+            <rect
+              x={slices[hovered].tooltipX - 22}
+              y={slices[hovered].tooltipY - 14}
+              width={44}
+              height={22}
+              rx={6}
+              fill="var(--text)"
+              opacity={0.92}
+            />
+            <text
+              x={slices[hovered].tooltipX}
+              y={slices[hovered].tooltipY + 1}
+              textAnchor="middle"
+              dominantBaseline="middle"
+              fill="var(--surface)"
+              fontSize={12}
+              fontWeight={600}
+              style={{ pointerEvents: "none" }}
+            >
+              {slices[hovered].value}
+            </text>
+          </>
+        )}
+      </svg>
+    </div>
   );
 }
 

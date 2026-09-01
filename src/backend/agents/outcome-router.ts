@@ -254,7 +254,7 @@ export async function routeOutcome(
 
       await storeMessage(leadId, clientId, callId, "whatsapp", "Tried reaching — will retry", {});
 
-      if (currentAttempt > 3) {
+      if (currentAttempt >= 3) {
         await db
           .update(schema.clientLeads)
           .set({ status: "lost", lostAt: new Date(), lastCallAt: new Date(), attemptCount: currentAttempt })
@@ -274,7 +274,7 @@ export async function routeOutcome(
 
       await storeMessage(leadId, clientId, callId, "whatsapp", "Line busy — will retry", {});
 
-      if (currentAttempt > 3) {
+      if (currentAttempt >= 3) {
         await db
           .update(schema.clientLeads)
           .set({ status: "lost", lostAt: new Date(), lastCallAt: new Date(), attemptCount: currentAttempt })
@@ -294,7 +294,7 @@ export async function routeOutcome(
 
       await storeMessage(leadId, clientId, callId, "whatsapp", "Call failed — will retry", {});
 
-      if (currentAttempt > 3) {
+      if (currentAttempt >= 3) {
         await db
           .update(schema.clientLeads)
           .set({ status: "lost", lostAt: new Date(), lastCallAt: new Date(), attemptCount: currentAttempt })
