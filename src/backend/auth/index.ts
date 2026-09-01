@@ -67,7 +67,7 @@ export async function createSession(userId: string): Promise<string> {
   return sessionId;
 }
 
-export async function getSession(): Promise<{ userId: string; email: string; sessionId: string } | null> {
+export async function getSession(): Promise<{ userId: string; email: string; sessionId: string; activeOrganizationId: string } | null> {
   const cookieStore = await cookies();
   const sessionId = cookieStore.get("session")?.value;
   if (!sessionId) return null;
@@ -86,7 +86,7 @@ export async function getSession(): Promise<{ userId: string; email: string; ses
 
   if (!user) return null;
 
-  return { userId: user.id, email: user.email, sessionId };
+  return { userId: user.id, email: user.email, sessionId, activeOrganizationId: session.activeOrganizationId };
 }
 
 export async function deleteSession(): Promise<void> {

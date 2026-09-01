@@ -1,9 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/backend/db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { getSession } from "@/backend/auth";
+import { generateLeadInsights } from "@/backend/services/lead-insights";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const leadId = params.id;
+
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+
+  const [clientLead] = await db
+    .select()
+    .from(schema.clientLeads)
+    .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, session.activeOrganizationId)))
+    .limit(1);
+
+  if (!clientLead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
 
   // Lead info
   const [lead] = await db
@@ -28,38 +41,32 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json({ error: "Lead not found" }, { status: 404 });
   }
 
-  // Client lead info (score, band, status) — needs clientId filter; for now pick first
-  // TODO: pass clientId via auth header and filter: and(eq(leadId, leadId), eq(clientId, authClientId))
-  const [clientLead] = await db
-    .select()
-    .from(schema.clientLeads)
-    .where(eq(schema.clientLeads.leadId, leadId))
-    .limit(1);
-
-  // enforce client scoping on calls/messages via clientLeads join when auth is available
-
   // Calls
   const calls = await db
     .select()
     .from(schema.calls)
-    .where(eq(schema.calls.leadId, leadId))
+    .where(and(eq(schema.calls.leadId, leadId), eq(schema.calls.clientId, session.activeOrganizationId)))
     .orderBy(sql`${schema.calls.startedAt} DESC`);
 
   // Messages
   const messages = await db
     .select()
     .from(schema.messages)
-    .where(eq(schema.messages.leadId, leadId))
+    .where(and(eq(schema.messages.leadId, leadId), eq(schema.messages.clientId, session.activeOrganizationId)))
     .orderBy(sql`${schema.messages.sentAt} DESC`);
 
+  const leadWithState = {
+    ...lead,
+    score: clientLead.score ?? null,
+    band: clientLead.band ?? null,
+    status: clientLead.status ?? null,
+  };
+  const insights = await generateLeadInsights({ lead: leadWithState, calls, messages });
+
   return NextResponse.json({
-    lead: {
-      ...lead,
-      score: clientLead?.score ?? null,
-      band: clientLead?.band ?? null,
-      status: clientLead?.status ?? null,
-    },
+    lead: leadWithState,
     calls,
     messages,
+    insights,
   });
 }

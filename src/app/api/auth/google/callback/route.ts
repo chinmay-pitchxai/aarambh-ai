@@ -18,8 +18,6 @@ export async function GET(req: Request) {
 
   try {
     const redirectUri = `${appUrl}/api/auth/google/callback`;
-    console.log("[auth/google/callback] Exchanging code. redirect_uri:", redirectUri);
-    console.log("[auth/google/callback] client_id:", process.env.GOOGLE_CLIENT_ID);
 
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -34,9 +32,8 @@ export async function GET(req: Request) {
     });
 
     const tokens = await tokenRes.json();
-    console.log("[auth/google/callback] Token response:", JSON.stringify(tokens));
     if (tokens.error) {
-      console.error("[auth/google/callback] Token exchange error:", JSON.stringify(tokens));
+      console.error("[auth/google/callback] Token exchange failed:", tokens.error);
       return NextResponse.redirect(`${appUrl}/auth/login?error=token_exchange_failed`);
     }
 

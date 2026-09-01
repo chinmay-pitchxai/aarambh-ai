@@ -9,7 +9,7 @@ import { randomUUID } from "crypto";
 
 const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
 
-async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
+async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string; recordingUrl?: string }> {
   const apiKey = process.env.VOBIZ_API_KEY;
   if (!apiKey) {
     return { callId: `dev-${randomUUID().slice(0, 8)}`, status: "connected" };
@@ -25,12 +25,15 @@ async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: s
       to: phoneE164,
       from: process.env.VOBIZ_FROM_NUMBER,
       webhook: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
+      record: true,
+      recording_callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
+      transcription_callback_url: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
     }),
   });
 
   if (!res.ok) throw new Error(`Vobiz dial failed: ${res.status}`);
   const data = await res.json();
-  return { callId: data.call_id, status: data.status };
+  return { callId: data.call_id, status: data.status, recordingUrl: data.recording_url || data.url };
 }
 
 async function getTranscript(callId: string): Promise<Array<{ role: string; text: string }>> {
@@ -94,7 +97,7 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
     }
 
     // 4. Dial
-    const { callId, status } = await dialVobiz(lead.phoneE164);
+    const { callId, status, recordingUrl } = await dialVobiz(lead.phoneE164);
     ctx.log("dialer connected", { callId, status });
 
     // 5. Simulate outcome
@@ -138,6 +141,7 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
       sentiment,
       pitchUsed: finalPitch,
       summary,
+      recordingUrl,
       attemptNumber,
       startedAt: new Date(),
       endedAt: new Date(Date.now() + durationSec * 1000),

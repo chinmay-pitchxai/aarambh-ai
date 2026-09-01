@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/backend/db";
-import { sql, eq } from "drizzle-orm";
+import { and, sql, eq } from "drizzle-orm";
+import { getSession } from "@/backend/auth";
 
 export async function GET(req: NextRequest) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  const clientId = session.activeOrganizationId;
   const { searchParams } = new URL(req.url);
   const limit = parseInt(searchParams.get("limit") || "50");
   const type = searchParams.get("type"); // "call" | "message" | null
@@ -18,7 +22,7 @@ export async function GET(req: NextRequest) {
           durationSec: schema.calls.durationSec,
           summary: schema.calls.summary,
           sentiment: schema.calls.sentiment,
-          recordingUrl: sql<string>`null`,
+          recordingUrl: schema.calls.recordingUrl,
           timestamp: schema.calls.startedAt,
           leadFirstName: schema.leads.firstName,
           leadLastName: schema.leads.lastName,
@@ -28,7 +32,8 @@ export async function GET(req: NextRequest) {
         })
         .from(schema.calls)
         .leftJoin(schema.leads, eq(schema.calls.leadId, schema.leads.id))
-        .leftJoin(schema.clientLeads, eq(schema.calls.leadId, schema.clientLeads.leadId))
+        .leftJoin(schema.clientLeads, and(eq(schema.calls.leadId, schema.clientLeads.leadId), eq(schema.clientLeads.clientId, clientId)))
+        .where(eq(schema.calls.clientId, clientId))
         .orderBy(sql`${schema.calls.startedAt} DESC`)
         .limit(limit)
     : [];
@@ -52,7 +57,8 @@ export async function GET(req: NextRequest) {
         })
         .from(schema.messages)
         .leftJoin(schema.leads, eq(schema.messages.leadId, schema.leads.id))
-        .leftJoin(schema.clientLeads, eq(schema.messages.leadId, schema.clientLeads.leadId))
+        .leftJoin(schema.clientLeads, and(eq(schema.messages.leadId, schema.clientLeads.leadId), eq(schema.clientLeads.clientId, clientId)))
+        .where(eq(schema.messages.clientId, clientId))
         .orderBy(sql`${schema.messages.sentAt} DESC`)
         .limit(limit)
     : [];

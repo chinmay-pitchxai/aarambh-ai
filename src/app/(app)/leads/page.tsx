@@ -143,14 +143,14 @@ export default function LeadsPage() {
                       col.items.slice(0, 3).map((lead) => (
                         <div
                           key={lead.id}
-                          onClick={() => col.key !== "icp" ? setSelectedLeadId(lead.leadId) : undefined}
+                          onClick={(event) => { event.stopPropagation(); setSelectedLeadId(lead.leadId); }}
                           style={{
                             background: "var(--surface)", borderRadius: 10, padding: 10,
                             border: "1px solid var(--border)", boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                            cursor: col.key !== "icp" ? "pointer" : "default",
+                            cursor: "pointer",
                             transition: "border-color 0.15s, box-shadow 0.15s",
                           }}
-                          onMouseEnter={(e) => { if (col.key !== "icp") { e.currentTarget.style.borderColor = col.color; e.currentTarget.style.boxShadow = `0 2px 8px ${col.color}22`; } }}
+                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = col.color; e.currentTarget.style.boxShadow = `0 2px 8px ${col.color}22`; }}
                           onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"; }}
                         >
                           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>

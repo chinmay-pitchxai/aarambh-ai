@@ -12,6 +12,7 @@ interface User {
 interface Org {
   id: string;
   name: string;
+  onboardingCompleted: boolean;
 }
 
 interface AuthContextType {

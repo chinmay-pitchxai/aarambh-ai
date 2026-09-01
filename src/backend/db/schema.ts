@@ -10,7 +10,7 @@ export const membershipRole = pgEnum("membership_role", ["owner", "admin", "memb
 // ── Mother Leads DB (global, cross-client) ──
 export const leads = pgTable("leads", {
   id: text("id").primaryKey(),
-  phoneE164: text("phone_e164").notNull(),
+  phoneE164: text("phone_e164"),
   email: text("email"),
   firstName: text("first_name"),
   lastName: text("last_name"),
@@ -64,6 +64,7 @@ export const calls = pgTable("calls", {
   sentiment: text("sentiment"),              // positive/neutral/negative
   pitchUsed: text("pitch_used"),
   summary: text("summary"),
+  recordingUrl: text("recording_url"),
   startedAt: timestamp("started_at"),
   endedAt: timestamp("ended_at"),
   attemptNumber: integer("attempt_number").default(1),
