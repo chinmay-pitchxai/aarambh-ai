@@ -1,0 +1,56 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "LangGraph Autonomous Sales Workflow",
+    "locale": "en",
+    "quality_profile": "showcase"
+  },
+  "lanes": [
+    { "id": "orchestration", "label": "Event-Driven LangGraph Orchestration" }
+  ],
+  "phases": [
+    { "id": "trigger", "label": "Trigger", "fromCol": 0, "toCol": 0 },
+    { "id": "reason", "label": "Plan + parallel reasoning", "fromCol": 1, "toCol": 3, "variant": "emphasis" },
+    { "id": "execute", "label": "Authorize + execute", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "groups": [
+    { "id": "specialists", "label": "Configuration-driven five-agent fan-out", "lane": "orchestration", "fromCol": 1, "toCol": 3, "variant": "emphasis" },
+    { "id": "guardrails", "label": "Policy and entitlement boundary", "lane": "orchestration", "fromCol": 4, "toCol": 5, "variant": "security" },
+    { "id": "durability", "label": "PostgreSQL + queue + observability", "lane": "orchestration", "fromCol": 1, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["event_intake", "supervisor", "policy_gate", "action_dispatch", "durable_runtime"],
+  "semanticChecks": {
+    "allowedRoots": ["event_intake"],
+    "allowedTerminals": ["research_agent", "lead_agent", "outreach_agent", "conversation_agent", "meeting_agent", "durable_runtime", "state_store"],
+    "requiredPaths": [
+      { "from": "event_intake", "to": "durable_runtime" },
+      { "from": "supervisor", "to": "policy_gate" }
+    ]
+  },
+  "nodes": [
+    { "id": "event_intake", "lane": "orchestration", "col": 0, "type": "messagebus", "label": "Event Intake", "sublabel": "API, webhook, schedule", "width": 150 },
+    { "id": "supervisor", "lane": "orchestration", "col": 1, "type": "backend", "label": "LangGraph Supervisor", "sublabel": "route by typed state", "tag": "checkpointed", "width": 160 },
+    { "id": "research_agent", "lane": "orchestration", "col": 1, "type": "backend", "label": "Business Research", "sublabel": "profile + ICP", "width": 148, "yOffset": 82 },
+    { "id": "lead_agent", "lane": "orchestration", "col": 2, "type": "backend", "label": "Lead Intelligence", "sublabel": "source + enrich + score", "width": 148, "yOffset": 82 },
+    { "id": "outreach_agent", "lane": "orchestration", "col": 3, "type": "backend", "label": "Outreach Planner", "sublabel": "channel + timing", "width": 148, "yOffset": 82 },
+    { "id": "conversation_agent", "lane": "orchestration", "col": 2, "type": "backend", "label": "Conversation Agent", "sublabel": "voice, email, WhatsApp", "width": 148, "yOffset": 164 },
+    { "id": "meeting_agent", "lane": "orchestration", "col": 3, "type": "backend", "label": "Meeting Agent", "sublabel": "qualify + schedule", "width": 148, "yOffset": 164 },
+    { "id": "policy_gate", "lane": "orchestration", "col": 4, "type": "security", "label": "Policy Gate", "sublabel": "RBAC, consent, entitlement", "tag": "deterministic", "width": 156 },
+    { "id": "action_dispatch", "lane": "orchestration", "col": 5, "type": "messagebus", "label": "Action Dispatcher", "sublabel": "idempotent commands", "width": 156 },
+    { "id": "durable_runtime", "lane": "orchestration", "col": 5, "type": "cloud", "label": "Provider Workers", "sublabel": "retry, backoff, DLQ", "width": 156, "yOffset": 260 },
+    { "id": "state_store", "lane": "orchestration", "col": 1, "type": "database", "label": "PostgreSQL State", "sublabel": "checkpoints + audit", "width": 156, "yOffset": 260 }
+  ],
+  "edges": [
+    { "id": "event_to_supervisor", "from": "event_intake", "to": "supervisor", "label": "validated event", "variant": "emphasis", "role": "main" },
+    { "id": "supervisor_to_research", "from": "supervisor", "to": "research_agent", "label": "business task", "role": "async" },
+    { "id": "supervisor_to_leads", "from": "supervisor", "to": "lead_agent", "label": "lead task", "role": "async" },
+    { "id": "supervisor_to_outreach", "from": "supervisor", "to": "outreach_agent", "label": "outreach task", "role": "async", "route": "up-channel" },
+    { "id": "supervisor_to_conversation", "from": "supervisor", "to": "conversation_agent", "label": "conversation task", "role": "async" },
+    { "id": "supervisor_to_meeting", "from": "supervisor", "to": "meeting_agent", "label": "meeting task", "role": "async" },
+    { "id": "supervisor_to_gate", "from": "supervisor", "to": "policy_gate", "label": "wait for all + reduce", "variant": "emphasis", "role": "main" },
+    { "id": "gate_to_dispatch", "from": "policy_gate", "to": "action_dispatch", "label": "authorized command", "variant": "security", "role": "main" },
+    { "id": "dispatch_to_workers", "from": "action_dispatch", "to": "durable_runtime", "label": "queued job", "variant": "emphasis", "role": "main" },
+    { "id": "supervisor_checkpoint", "from": "supervisor", "to": "state_store", "label": "checkpoint + audit", "variant": "dashed", "role": "async" }
+  ]
+}

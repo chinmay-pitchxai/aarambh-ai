@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { LineChart, MultiLineChart, StackedAreaChart, Heatmap, BarChart, GaugeChart, KPICard, groupByDate, groupByDateAndCategory } from "@/components/Charts";
+import { ChatPanel } from "@/components/ChatPanel";
 
 interface Stats {
   pipeline: Record<string, number>;
@@ -399,6 +400,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      <ChatPanel />
     </div>
   );
 }

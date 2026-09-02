@@ -2,6 +2,7 @@ import type { Agent, AgentContext, ScoutInput, ScoutOutput } from "./types";
 import { db, schema } from "../db";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { searchApolloProspects, type IcpProfile, type ApolloProspect } from "../services/apollo";
 
 // ── Scout Agent ──
 // Pulls leads from mother DB (reuse) or Apollo (new), stores + dedupes
@@ -111,7 +112,7 @@ export const scoutAgent: Agent<ScoutInput, ScoutOutput> = {
   },
 };
 
-// ── Apollo API (stub — replace with real fetch) ──
+// ── Apollo API ──
 
 interface ApolloLead {
   phoneE164: string;
@@ -128,14 +129,53 @@ interface ApolloLead {
   rawData: unknown;
 }
 
+function icpFromTags(tags: string[]): IcpProfile {
+  const seniorities = ["owner", "founder", "c_suite", "vp", "head", "director", "manager"];
+  const matchedSeniorities = tags.filter((t) => seniorities.includes(t.toLowerCase()));
+  return {
+    industries: tags.filter((t) => !seniorities.includes(t.toLowerCase()) && t.length > 3),
+    personTitles: tags.filter((t) => /\b(vp|director|head|chief|manager|lead|founder|owner)\b/i.test(t)),
+    seniorities: matchedSeniorities.length > 0 ? matchedSeniorities : ["c_suite", "vp", "director"],
+    employeeRanges: ["11,50", "51,200", "201,500"],
+    locations: [],
+    keywords: tags.filter((t) => t.length > 3).slice(0, 5),
+  };
+}
+
+function normalizePhone(phone: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length >= 10) {
+    if (digits.startsWith("91") && digits.length === 12) return `+${digits}`;
+    if (digits.length === 10) return `+91${digits}`;
+    if (digits.startsWith("+")) return `+${digits.replace(/\+/g, "")}`;
+  }
+  return `+${digits}`;
+}
+
 async function pullFromApollo(icpTags: string[], limit: number): Promise<ApolloLead[]> {
   const apiKey = process.env.APOLLO_API_KEY;
-  if (!apiKey) return []; // no API key = skip Apollo
+  if (!apiKey) return [];
 
-  // TODO: implement real Apollo People Search API
-  // POST https://api.apollo.io/v1/mixed_people/search
-  // Body: { q_keywords, person_titles, organization_industry_ids, per_page }
-  // Then reveal_phone for each result
-
-  return [];
+  try {
+    const icp = icpFromTags(icpTags);
+    const prospects = await searchApolloProspects(icp, limit);
+    return prospects.map((p: ApolloProspect): ApolloLead => ({
+      phoneE164: normalizePhone(p.phone) || "",
+      email: p.email,
+      firstName: p.firstName,
+      lastName: p.lastName,
+      company: p.company,
+      title: p.title,
+      city: p.city,
+      industry: p.industry,
+      companySize: p.companySize,
+      sourceRef: p.id,
+      sourceCost: 100,
+      rawData: p.raw,
+    }));
+  } catch (error) {
+    console.warn("[scout] Apollo pull failed", error);
+    return [];
+  }
 }

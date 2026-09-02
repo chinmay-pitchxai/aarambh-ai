@@ -85,6 +85,7 @@ export const messages = pgTable("messages", {
   waMessageId: text("wa_message_id"),
   gmailThreadId: text("gmail_thread_id"),
   templateName: text("template_name"),
+  idempotencyKey: text("idempotency_key"),
   sentAt: timestamp("sent_at").defaultNow(),
 }, (t) => [
   index("idx_messages_lead").on(t.leadId),
@@ -268,8 +269,355 @@ export const businessProfiles = pgTable("business_profiles", {
   confidenceScore: integer("confidence_score"),
   lastResearchedAt: timestamp("last_researched_at"),
   rawResearchData: jsonb("raw_research_data"),
+  icp: jsonb("icp"),
+  icpVersion: integer("icp_version").default(1),
+  ragData: jsonb("rag_data"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (t) => [
   uniqueIndex("idx_biz_org").on(t.organizationId),
+]);
+
+// ── Prompt Templates (per-tenant sales prompts) ──
+export const promptTemplates = pgTable("prompt_templates", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  companyId: text("company_id").notNull().references(() => businessProfiles.id, { onDelete: "cascade" }),
+  promptType: text("prompt_type").notNull(),   // "master" | "discovery" | "qualification" | "objection" | "closing"
+  promptVersion: integer("prompt_version").default(1),
+  systemPrompt: text("system_prompt"),
+  behaviorPrompt: text("behavior_prompt"),
+  qualificationPrompt: text("qualification_prompt"),
+  objectionPrompt: text("objection_prompt"),
+  closingPrompt: text("closing_prompt"),
+  status: text("status").default("draft"),    // "draft" | "active" | "archived"
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_prompt_tenant").on(t.tenantId),
+  index("idx_prompt_company").on(t.companyId),
+  uniqueIndex("idx_prompt_type_version").on(t.companyId, t.promptType, t.promptVersion),
+]);
+
+// ── Enums for new systems ──
+export const eventStatus = pgEnum("event_status", ["pending", "published", "failed"]);
+export const webhookStatus = pgEnum("webhook_status", ["received", "processing", "completed", "failed"]);
+export const membershipRole2 = pgEnum("membership_role2", ["owner", "admin", "member", "viewer"]);
+
+// ── Billing: Plans ──
+export const plans = pgTable("plans", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  interval: text("interval").notNull().default("monthly"),
+  priceCents: integer("price_cents").notNull().default(0),
+  currency: text("currency").notNull().default("INR"),
+  entitlementsJson: jsonb("entitlements_json").notNull(),
+  active: boolean("active").default(true),
+  version: integer("version").default(1),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ── Billing: Subscriptions ──
+export const subscriptions = pgTable("subscriptions", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull().references(() => plans.id),
+  status: subscriptionStatus("status").default("active"),
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_sub_org").on(t.organizationId),
+]);
+
+// ── Billing: Payments ──
+export const payments = pgTable("payments", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  subscriptionId: text("subscription_id").references(() => subscriptions.id),
+  amountCents: integer("amount_cents").notNull(),
+  currency: text("currency").notNull().default("INR"),
+  status: text("status").notNull().default("pending"),
+  providerRef: text("provider_ref"),
+  idempotencyKey: text("idempotency_key").unique(),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_payments_org").on(t.organizationId),
+]);
+
+// ── Billing: Wallets ──
+export const wallets = pgTable("wallets", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  balanceCents: integer("balance_cents").notNull().default(0),
+  currency: text("currency").notNull().default("INR"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("idx_wallets_org").on(t.organizationId),
+]);
+
+// ── Billing: Wallet Transactions ──
+export const walletTransactions = pgTable("wallet_transactions", {
+  id: text("id").primaryKey(),
+  walletId: text("wallet_id").notNull().references(() => wallets.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  amountCents: integer("amount_cents").notNull(),
+  balanceAfter: integer("balance_after").notNull(),
+  description: text("description"),
+  idempotencyKey: text("idempotency_key").unique(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ── Billing: Entitlement Usage ──
+export const entitlementUsage = pgTable("entitlement_usage", {
+  id: text("id").primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  planId: text("plan_id").notNull().references(() => plans.id),
+  reservationId: text("reservation_id").unique(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  resource: text("resource").notNull(),
+  used: integer("used").default(0),
+  reserved: integer("reserved").default(0),
+  status: text("status").default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_ent_org_resource").on(t.organizationId, t.resource),
+]);
+
+// ── Telephony: Phone Numbers ──
+export const phoneNumbers = pgTable("phone_numbers", {
+  id: text("id").primaryKey(),
+  numberE164: text("number_e164").notNull(),
+  provider: text("provider").default("vobiz"),
+  status: text("status").default("available"),
+  tenantId: text("tenant_id").references(() => organizations.id, { onDelete: "set null" }),
+  provisionedAt: timestamp("provisioned_at").defaultNow(),
+  assignedAt: timestamp("assigned_at"),
+  releasedAt: timestamp("released_at"),
+}, (t) => [
+  index("idx_phone_tenant").on(t.tenantId),
+  uniqueIndex("idx_phone_number").on(t.numberE164),
+]);
+
+// ── Telephony: Call Events ──
+export const callEvents = pgTable("call_events", {
+  id: text("id").primaryKey(),
+  callId: text("call_id").notNull(),
+  eventType: text("event_type").notNull(),
+  payloadJson: jsonb("payload_json"),
+  idempotencyKey: text("idempotency_key").unique(),
+  receivedAt: timestamp("received_at").defaultNow(),
+}, (t) => [
+  index("idx_call_events_call").on(t.callId),
+  index("idx_call_events_type").on(t.eventType),
+]);
+
+// ── Runtime: Graph Runs ──
+export const graphRuns = pgTable("graph_runs", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  graphName: text("graph_name").notNull(),
+  threadId: text("thread_id").notNull(),
+  status: text("status").default("pending"),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+  error: text("error"),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_graph_tenant").on(t.tenantId),
+  index("idx_graph_thread").on(t.threadId),
+  uniqueIndex("idx_graph_thread_unique").on(t.threadId),
+]);
+
+// ── Runtime: Agent Runs ──
+export const agentRuns = pgTable("agent_runs", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  graphRunId: text("graph_run_id").notNull().references(() => graphRuns.id, { onDelete: "cascade" }),
+  agentName: text("agent_name").notNull(),
+  status: text("status").default("pending"),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  error: text("error"),
+  startedAt: timestamp("started_at"),
+  endedAt: timestamp("ended_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_agent_graph").on(t.graphRunId),
+]);
+
+// ── Runtime: Tool Executions ──
+export const toolExecutions = pgTable("tool_executions", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  agentRunId: text("agent_run_id").references(() => agentRuns.id, { onDelete: "cascade" }),
+  toolName: text("tool_name").notNull(),
+  input: jsonb("input"),
+  output: jsonb("output"),
+  status: text("status").default("pending"),
+  idempotencyKey: text("idempotency_key").unique(),
+  startedAt: timestamp("started_at"),
+  endedAt: timestamp("ended_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ── Runtime: Queue Jobs ──
+export const queueJobs = pgTable("queue_jobs", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id"),
+  clientId: text("client_id"),
+  queue: text("queue"),
+  jobType: text("job_type"),
+  type: text("type").notNull(),
+  payload: jsonb("payload"),
+  status: text("status").default("pending"),
+  priority: text("priority"),
+  attempt: integer("attempt").default(0),
+  maxAttempts: integer("max_attempts").default(5),
+  correlationId: text("correlation_id"),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  runAt: timestamp("run_at"),
+  runAfter: timestamp("run_after"),
+  processedAt: timestamp("processed_at"),
+}, (t) => [
+  index("idx_queue_tenant").on(t.tenantId),
+  index("idx_queue_status").on(t.status),
+]);
+
+// ── Events: Outbox ──
+export const outboxEvents = pgTable("outbox_events", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").references(() => organizations.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  aggregateType: text("aggregate_type"),
+  aggregateId: text("aggregate_id"),
+  payload: jsonb("payload").notNull(),
+  status: eventStatus("status").default("pending"),
+  publishedAt: timestamp("published_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_outbox_tenant").on(t.tenantId),
+  index("idx_outbox_status").on(t.status),
+]);
+
+// ── Events: Inbox ──
+export const inboxEvents = pgTable("inbox_events", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").references(() => organizations.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  externalId: text("external_id").notNull(),
+  eventType: text("event_type"),
+  payload: jsonb("payload").notNull(),
+  status: eventStatus("status").default("pending"),
+  processedAt: timestamp("processed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  uniqueIndex("idx_inbox_dedup").on(t.tenantId, t.source, t.externalId),
+  index("idx_inbox_tenant").on(t.tenantId),
+]);
+
+// ── Webhooks: Raw Event Storage ──
+export const webhookEvents = pgTable("webhook_events", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").references(() => organizations.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+  eventType: text("event_type").notNull(),
+  headers: jsonb("headers"),
+  payload: jsonb("payload").notNull(),
+  status: webhookStatus("status").default("received"),
+  processedAt: timestamp("processed_at"),
+  error: text("error"),
+  retryCount: integer("retry_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_webhook_tenant").on(t.tenantId),
+  index("idx_webhook_source").on(t.source),
+]);
+
+// ── Security: Audit Logs ──
+export const auditLogs = pgTable("audit_logs", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").references(() => organizations.id, { onDelete: "cascade" }),
+  userId: text("user_id"),
+  action: text("action").notNull(),
+  resource: text("resource"),
+  resourceId: text("resource_id"),
+  details: jsonb("details"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_audit_tenant").on(t.tenantId),
+]);
+
+// ── Security: Config Snapshots ──
+export const configSnapshots = pgTable("config_snapshots", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").references(() => organizations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  configType: text("config_type"),
+  config: jsonb("config"),
+  configJson: jsonb("config_json"),
+  version: integer("version").default(1),
+  isActive: boolean("is_active").default(true),
+  checksum: text("checksum"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_config_tenant").on(t.tenantId),
+]);
+
+// ── Integration: Credentials ──
+export const integrationCredentials = pgTable("integration_credentials", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  integration: text("integration").notNull(),
+  credentialsEncrypted: text("credentials_encrypted"),
+  status: text("status").default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_creds_tenant").on(t.tenantId),
+]);
+
+// ── Chat Messages (Dashboard Assistant) ──
+export const chatMessages = pgTable("chat_messages", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull(), // "user" | "assistant"
+  content: text("content").notNull(),
+  metadata: jsonb("metadata"), // tool results, token usage, etc.
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_chat_tenant").on(t.tenantId),
+  index("idx_chat_user").on(t.userId),
+]);
+
+// ── Calendar: Meeting Reminders ──
+export const meetingReminders = pgTable("meeting_reminders", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  organizationId: text("organization_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  clientId: text("client_id"),
+  leadId: text("lead_id"),
+  bookingId: text("booking_id").notNull(),
+  type: text("type").notNull(),
+  reminderType: text("reminder_type"),
+  channel: text("channel"),
+  scheduledAt: timestamp("scheduled_at").notNull(),
+  scheduledFor: timestamp("scheduled_for"),
+  status: text("status").default("pending"),
+  error: text("error"),
+  sent: boolean("sent").default(false),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_reminder_org").on(t.organizationId),
+  index("idx_reminder_scheduled").on(t.scheduledAt),
 ]);

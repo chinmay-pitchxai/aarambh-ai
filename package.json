@@ -12,10 +12,18 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "scheduler": "npx tsx src/backend/scheduler.ts",
-    "seed:fresh": "npx tsx seed.ts"
+    "seed:fresh": "npx tsx seed.ts",
+    "guard:production": "node scripts/production-guard.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run guard:production && npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "@composio/core": "^0.17.0",
+    "@langchain/langgraph": "^1.4.13",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
     "@qdrant/js-client-rest": "^1.12.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/bcryptjs": "^2.4.6",
@@ -34,11 +42,15 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "docx": "^9.7.1",
     "drizzle-kit": "^0.28.1",
+    "eslint": "^9.39.5",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^3.2.7"
   }
 }

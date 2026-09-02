@@ -151,15 +151,87 @@ async function bulkEnrichPeople(people: any[]): Promise<any[]> {
 
 export async function searchApolloProspects(icp: IcpProfile, limit = 20): Promise<ApolloProspect[]> {
   const requested = Math.max(1, Math.min(limit, 100));
-  const params = new URLSearchParams({ page: "1", per_page: String(requested), include_similar_titles: "true" });
-  appendArray(params, "person_titles", icp.personTitles.slice(0, 8));
-  appendArray(params, "person_seniorities", icp.seniorities.slice(0, 8));
-  appendArray(params, "organization_num_employees_ranges", icp.employeeRanges.slice(0, 5));
-  appendArray(params, "organization_locations", icp.locations.slice(0, 5));
-  if (icp.keywords.length > 0) params.set("q_keywords", icp.keywords.slice(0, 8).join(" "));
 
-  const search = await apolloFetch(`/mixed_people/api_search?${params}`, { method: "POST", body: "{}" });
-  const people = Array.isArray(search.people) ? search.people : [];
-  const enriched = await bulkEnrichPeople(people.slice(0, requested));
-  return enriched.map(mapProspect).filter((lead: ApolloProspect | null): lead is ApolloProspect => Boolean(lead));
+  try {
+    const params = new URLSearchParams({ page: "1", per_page: String(requested), include_similar_titles: "true" });
+    appendArray(params, "person_titles", icp.personTitles.slice(0, 8));
+    appendArray(params, "person_seniorities", icp.seniorities.slice(0, 8));
+    appendArray(params, "organization_num_employees_ranges", icp.employeeRanges.slice(0, 5));
+    appendArray(params, "organization_locations", icp.locations.slice(0, 5));
+    if (icp.keywords.length > 0) params.set("q_keywords", icp.keywords.slice(0, 8).join(" "));
+
+    const search = await apolloFetch(`/mixed_people/api_search?${params}`, { method: "POST", body: "{}" });
+    const people = Array.isArray(search.people) ? search.people : [];
+
+    if (people.length > 0) {
+      const enriched = await bulkEnrichPeople(people.slice(0, requested));
+      return enriched.map(mapProspect).filter((lead: ApolloProspect | null): lead is ApolloProspect => Boolean(lead));
+    }
+  } catch (error) {
+    console.warn("[apollo] people search failed, falling back to organization search", error);
+  }
+
+  return fallbackFromOrganizations(icp, requested);
+}
+
+async function fallbackFromOrganizations(icp: IcpProfile, limit: number): Promise<ApolloProspect[]> {
+  const params = new URLSearchParams({ page: "1", per_page: String(Math.min(limit, 25)) });
+  appendArray(params, "organization_industry_tag_ids", []);
+  if (icp.locations.length > 0) params.set("q_organization_locations", icp.locations[0]);
+  if (icp.keywords.length > 0) params.set("q_keywords", icp.keywords.slice(0, 3).join(" "));
+  appendArray(params, "organization_num_employees_ranges", icp.employeeRanges.slice(0, 3));
+
+  try {
+    const search = await apolloFetch(`/mixed_companies/search?${params}`, { method: "POST", body: "{}" });
+    const orgs: any[] = Array.isArray(search.organizations) ? search.organizations : [];
+
+    const prospects: ApolloProspect[] = [];
+    for (const org of orgs.slice(0, Math.min(limit, 10))) {
+      if (!org?.id) continue;
+      try {
+        const peopleParams = new URLSearchParams({
+          organization_ids: String(org.id),
+          per_page: "5",
+          page: "1",
+          person_titles: (icp.personTitles.slice(0, 3)).join("|"),
+        });
+        const peopleResult = await apolloFetch(`/mixed_people/api_search?${peopleParams}`, { method: "POST", body: "{}" });
+        const people: any[] = Array.isArray(peopleResult.people) ? peopleResult.people : [];
+        for (const person of people) {
+          const mapped = mapProspect(person);
+          if (mapped) prospects.push(mapped);
+          if (prospects.length >= limit) break;
+        }
+      } catch {
+        // skip this org
+      }
+      if (prospects.length >= limit) break;
+    }
+    return prospects;
+  } catch (error) {
+    console.warn("[apollo] organization fallback also failed", error);
+    return [];
+  }
+}
+
+export async function searchApolloOrganizations(keywords: string[], locations: string[], employeeRanges: string[], limit = 10): Promise<ApolloOrganization[]> {
+  const params = new URLSearchParams({ page: "1", per_page: String(Math.min(limit, 25)) });
+  if (keywords.length > 0) params.set("q_keywords", keywords.slice(0, 5).join(" "));
+  if (locations.length > 0) params.set("q_organization_locations", locations[0]);
+  appendArray(params, "organization_num_employees_ranges", employeeRanges.slice(0, 3));
+
+  const search = await apolloFetch(`/mixed_companies/search?${params}`, { method: "POST", body: "{}" });
+  const orgs: any[] = Array.isArray(search.organizations) ? search.organizations : [];
+  return orgs.filter(Boolean).map((org: any) => ({
+    id: org.id,
+    name: org.name,
+    websiteUrl: org.website_url,
+    industry: org.industry,
+    estimatedNumEmployees: org.estimated_num_employees,
+    city: org.city,
+    state: org.state,
+    country: org.country,
+    shortDescription: org.short_description,
+    raw: org,
+  }));
 }
