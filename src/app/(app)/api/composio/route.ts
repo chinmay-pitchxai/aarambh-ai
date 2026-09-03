@@ -16,13 +16,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Missing parameters' }, { status: 400 });
   }
 
+  const safeClientId = clientId || "";
+  const safeIntegration = integration || "";
+
   try {
     switch (action) {
       case 'connect': {
         const baseUrl = req.nextUrl.origin;
-        const callbackUrl = `${baseUrl}/api/composio/callback?clientId=${encodeURIComponent(clientId)}&integration=${encodeURIComponent(integration)}`;
+        const callbackUrl = `${baseUrl}/api/composio/callback?clientId=${encodeURIComponent(safeClientId)}&integration=${encodeURIComponent(safeIntegration)}`;
 
-        const result = await composioService.initiateConnection(clientId, integration, callbackUrl);
+        const result = await composioService.initiateConnection(safeClientId, safeIntegration, callbackUrl);
 
         if (result.needsConfig) {
           return NextResponse.json({
@@ -55,7 +58,7 @@ export async function GET(req: NextRequest) {
       }
 
       case 'status': {
-        const connection = await composioService.getConnectionStatus(clientId, integration);
+        const connection = await composioService.getConnectionStatus(safeClientId, safeIntegration);
         return NextResponse.json({
           connected: connection?.connected ?? false,
           status: connection?.status,

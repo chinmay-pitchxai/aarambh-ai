@@ -2,58 +2,48 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "AarambhAI — Production Architecture Blueprint",
-    "subtitle": "Current state vs. production-ready multi-tenant SaaS",
+    "title": "AarambhAI — Production Architecture",
     "output": "aarambh-ai-architecture.html",
-    "quality_profile": "showcase",
-    "views": [
-      { "id": "full-system", "label": "Full System", "focus": ["landing", "auth", "onboarding", "pipeline", "dialer", "summary", "payments"], "note": "Complete production flow from landing page to revenue." }
-    ]
+    "quality_profile": "showcase"
   },
   "layout": {
     "mode": "grid",
-    "cols": 4,
-    "gapX": 140,
-    "gapY": 120,
-    "cellW": 160,
-    "cellH": 60
+    "cols": 6,
+    "gapX": 80,
+    "gapY": 60,
+    "cellW": 130,
+    "cellH": 56
   },
   "components": [
-    { "id": "landing", "type": "frontend", "label": "Landing Page", "sublabel": "Marketing Site", "row": 0, "col": 0, "tag": "EXISTS" },
-    { "id": "auth", "type": "security", "label": "Authentication", "sublabel": "Email + Google OAuth", "row": 0, "col": 1, "tag": "BUILD" },
-    { "id": "onboarding", "type": "frontend", "label": "Onboarding", "sublabel": "Business Profile + ICP", "row": 0, "col": 2, "tag": "BUILD" },
-    { "id": "apollo", "type": "external", "label": "Apollo API", "sublabel": "Lead Sourcing", "row": 0, "col": 3, "tag": "STUB" },
-    { "id": "dashboard", "type": "frontend", "label": "Dashboard", "sublabel": "KPIs + Funnel", "row": 1, "col": 0, "tag": "EXISTS" },
-    { "id": "leads", "type": "frontend", "label": "Leads Board", "sublabel": "Kanban + ICP Tab", "row": 1, "col": 1, "tag": "EXISTS" },
-    { "id": "pipeline", "type": "backend", "label": "Pipeline", "sublabel": "14 AI Agents", "row": 1, "col": 2, "tag": "EXISTS" },
-    { "id": "dialer", "type": "backend", "label": "Dialer", "sublabel": "Vobiz Telephony", "row": 1, "col": 3, "tag": "EXISTS" },
-    { "id": "payments", "type": "security", "label": "Razorpay", "sublabel": "Payments + Plans", "row": 2, "col": 0, "tag": "BUILD" },
-    { "id": "memory", "type": "database", "label": "Lead Memory", "sublabel": "PostgreSQL + Redis", "row": 2, "col": 1, "tag": "EXISTS" },
-    { "id": "summary", "type": "backend", "label": "AI Analysis", "sublabel": "BANT + Next Action", "row": 2, "col": 2, "tag": "PARTIAL" },
-    { "id": "transcript", "type": "backend", "label": "Transcription", "sublabel": "Speaker Segments", "row": 2, "col": 3, "tag": "BUILD" },
-    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "Drizzle ORM", "row": 3, "col": 0, "tag": "EXISTS" },
-    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "Cache + Queue", "row": 3, "col": 1, "tag": "EXISTS" },
-    { "id": "whatsapp", "type": "external", "label": "WhatsApp", "sublabel": "Business API", "row": 3, "col": 2, "tag": "EXISTS" },
-    { "id": "gemini", "type": "external", "label": "Gemini", "sublabel": "LLM (2.5 Flash)", "row": 3, "col": 3, "tag": "EXISTS" }
+    { "id": "apollo", "type": "external", "label": "Apollo", "sublabel": "lead sources", "row": 0, "col": 0, "tag": "stub" },
+    { "id": "scout", "type": "backend", "label": "Scout", "sublabel": "hunt + enrich", "row": 0, "col": 1, "tag": "LangGraph" },
+    { "id": "ranker", "type": "backend", "label": "Ranker", "sublabel": "1-100 score", "row": 0, "col": 2, "tag": "Hot/Warm/Cold" },
+    { "id": "llm_lab", "type": "backend", "label": "LLM Lab", "sublabel": "Gemini analysis", "row": 0, "col": 3, "tag": "score+pitch" },
+    { "id": "dialer", "type": "messagebus", "label": "Dialer", "sublabel": "Vobiz + Gemini", "row": 0, "col": 4, "tag": "call<5min" },
+    { "id": "nudge", "type": "messagebus", "label": "Nudge", "sublabel": "WA + Gmail", "row": 0, "col": 5, "tag": "templates" },
+    { "id": "leads_db", "type": "database", "label": "Leads DB", "sublabel": "shared pool", "row": 1, "col": 1, "tag": "cross-client" },
+    { "id": "semantica", "type": "database", "label": "Semantica", "sublabel": "audit log", "row": 1, "col": 2, "tag": "PROV-O" },
+    { "id": "rlm", "type": "database", "label": "RLM", "sublabel": "call+text", "row": 1, "col": 4, "tag": "recall" },
+    { "id": "booked", "type": "frontend", "label": "Booked", "sublabel": "calendar", "row": 1, "col": 5 }
   ],
   "boundaries": [
-    { "kind": "region", "label": "AarambhAI SaaS Platform", "wraps": ["landing", "auth", "onboarding", "dashboard", "leads", "pipeline", "dialer", "payments", "memory", "summary", "transcript", "db", "redis"], "pad": 16 }
+    { "kind": "region", "label": "Pipeline", "wraps": ["apollo", "scout", "ranker", "llm_lab", "dialer", "nudge"], "pad": 12 },
+    { "kind": "security-group", "label": "Memory & Compliance", "wraps": ["leads_db", "semantica", "rlm"], "pad": 12 }
   ],
   "connections": [
-    { "id": "c1", "from": "landing", "to": "auth", "variant": "emphasis" },
-    { "id": "c2", "from": "auth", "to": "onboarding" },
-    { "id": "c3", "from": "onboarding", "to": "apollo" },
-    { "id": "c5", "from": "leads", "to": "pipeline", "variant": "emphasis" },
-    { "id": "c6", "from": "pipeline", "to": "dialer" },
-    { "id": "c10", "from": "transcript", "to": "summary" },
-    { "id": "c11", "from": "summary", "to": "memory" },
-    { "id": "c12", "from": "payments", "to": "leads", "variant": "dashed" },
-
-    { "id": "c15", "from": "db", "to": "redis", "variant": "dashed" }
+    { "id": "c1", "from": "apollo", "to": "scout", "label": "pull 100" },
+    { "id": "c2", "from": "scout", "to": "ranker", "variant": "emphasis" },
+    { "id": "c3", "from": "ranker", "to": "llm_lab", "variant": "emphasis" },
+    { "id": "c4", "from": "llm_lab", "to": "dialer", "variant": "emphasis" },
+    { "id": "c5", "from": "dialer", "to": "nudge", "variant": "emphasis" },
+    { "id": "c6", "from": "nudge", "to": "booked", "label": "interested", "variant": "emphasis", "labelAt": [1150, 154] },
+    { "id": "c7", "from": "scout", "to": "leads_db", "variant": "dashed" },
+    { "id": "c8", "from": "scout", "to": "semantica", "variant": "dashed" },
+    { "id": "c9", "from": "dialer", "to": "rlm", "variant": "dashed" },
+    { "id": "c10", "from": "nudge", "to": "rlm", "variant": "dashed" }
   ],
   "cards": [
-    { "dot": "emerald", "title": "EXISTS (80% Complete)", "items": ["14 AI agents with typed protocols", "Pipeline orchestrator + retry + reminders", "Vobiz telephony + WhatsApp + Gmail", "Gemini LLM for analysis + BANT", "PostgreSQL 11-table schema + Redis"] },
-    { "dot": "rose", "title": "BUILD (20% Remaining)", "items": ["Auth: NextAuth + Google OAuth + RBAC", "Payments: Razorpay order + webhook", "Apollo: Real API integration (stub)", "Recordings: S3 storage + waveform", "Multi-tenant: orgId isolation on all queries"] },
-    { "dot": "cyan", "title": "Phase Plan", "items": ["Phase 1: Auth + Multi-tenancy", "Phase 2: Onboarding + ICP + Apollo", "Phase 3: Razorpay + Subscriptions", "Phase 4: Recordings + Transcripts", "Phase 5: Hardening + Tests"] }
+    { "dot": "emerald", "title": "EXISTS (80%)", "items": ["14 agents running on PostgreSQL + Redis", "Direct API calls: Vobiz, WhatsApp, Gmail, Gemini", "Composio for OAuth connection management"] },
+    { "dot": "rose", "title": "MISSING (20%)", "items": ["Auth, multi-tenancy, Razorpay payments", "Apollo API integration (currently stub)", "Call recordings, transcripts, waveform UI"] }
   ]
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { LineChart, MultiLineChart, StackedAreaChart, Heatmap, BarChart, GaugeChart, KPICard, groupByDate, groupByDateAndCategory } from "@/components/Charts";
-
+import NotificationBell from "@/components/NotificationBell/NotificationBell";
 interface Stats {
   pipeline: Record<string, number>;
   bands: Record<string, number>;
@@ -166,9 +166,9 @@ export default function DashboardPage() {
   useEffect(() => {
     const ctrl = new AbortController();
     setError(null);
-    fetch("/api/stats", { signal: ctrl.signal })
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(setStats)
+    fetch("/api/stats", { signal: ctrl.signal, credentials: "include" })
+      .then((r) => { if (r.status === 401) { window.location.href = "/auth/login?from=/dashboard"; return null; } if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (data) setStats(data); })
       .catch((e) => { if (e.name !== "AbortError") setError(e.message || "Failed to load stats"); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
@@ -176,9 +176,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetch("/api/stats/history?days=30", { signal: ctrl.signal })
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(setHistory)
+    fetch("/api/stats/history?days=30", { signal: ctrl.signal, credentials: "include" })
+      .then((r) => { if (r.status === 401) return null; if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (data) setHistory(data); })
       .catch(() => {});
     return () => ctrl.abort();
   }, []);
@@ -222,11 +222,14 @@ export default function DashboardPage() {
   return (
     <div>
       {/* Header */}
-      <div className="section-header">
-        <h1 style={{ fontSize: 42, fontWeight: 300, lineHeight: 1.15, letterSpacing: "-0.01em" }}>
-          Your <span className="swash">Pipeline</span>,<br />Run by <span className="swash">AI</span>
-        </h1>
-        <p style={{ fontSize: 16, marginTop: 12 }}>Every lead tracked. Nothing leaks. Real-time.</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 40 }}>
+        <div className="section-header" style={{ marginBottom: 0 }}>
+          <h1 style={{ fontSize: 42, fontWeight: 300, lineHeight: 1.15, letterSpacing: "-0.01em" }}>
+            Your <span className="swash">Pipeline</span>,<br />Run by <span className="swash">AI</span>
+          </h1>
+          <p style={{ fontSize: 16, marginTop: 12 }}>Every lead tracked. Nothing leaks. Real-time.</p>
+        </div>
+        <NotificationBell />
       </div>
 
       {/* Primary Stats */}
@@ -399,6 +402,7 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
     </div>
   );
 }

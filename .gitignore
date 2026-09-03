@@ -14,6 +14,7 @@ dist
 
 # DB
 drizzle/*.sql
+!drizzle/003_lead_ai_features.sql
 drizzle/meta
 
 # Logs

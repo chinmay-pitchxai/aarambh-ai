@@ -1,54 +1,33 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { db, schema } from "@/backend/db";
-import { sql, eq, desc } from "drizzle-orm";
+import { and, sql, eq, desc } from "drizzle-orm";
+import { getSession } from "@/backend/auth";
 
-export async function GET(req: NextRequest) {
+export const dynamic = "force-dynamic";
+
+export async function GET() {
   try {
-    const clientId = req.nextUrl.searchParams.get("clientId");
+    const session = await getSession();
+    if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    const clientId = session.activeOrganizationId;
 
-    // Pipeline counts — optionally scoped to client
-    const pipelineQuery = db
+    const pipeline = await db
       .select({ status: schema.clientLeads.status, count: sql<number>`count(*)::int` })
       .from(schema.clientLeads)
+      .where(eq(schema.clientLeads.clientId, clientId))
       .groupBy(schema.clientLeads.status);
-    const pipeline = clientId
-      ? await pipelineQuery.where(eq(schema.clientLeads.clientId, clientId))
-      : await pipelineQuery;
 
-    // Band distribution
-    const bandsQuery = db
+    const bands = await db
       .select({ band: schema.clientLeads.band, count: sql<number>`count(*)::int` })
       .from(schema.clientLeads)
+      .where(eq(schema.clientLeads.clientId, clientId))
       .groupBy(schema.clientLeads.band);
-    const bands = clientId
-      ? await bandsQuery.where(eq(schema.clientLeads.clientId, clientId))
-      : await bandsQuery;
 
-    // Today's stats
     const today = new Date().toISOString().split("T")[0];
-    const todayKpi = clientId
-      ? await db.select().from(schema.kpiDaily).where(eq(schema.kpiDaily.clientId, clientId)).limit(1)
-      : await db.select().from(schema.kpiDaily).where(eq(schema.kpiDaily.date, today)).limit(1);
-
-    // Filter kpi by date + clientId if both present — for client scoped, pick latest
-    const kpiRow = clientId
-      ? todayKpi.find((r) => r.date === today) || todayKpi[0]
-      : todayKpi[0];
-
-    // Total leads — filtered by client if scoped
-    const totalLeads = clientId
-      ? await db.select({ count: sql<number>`count(*)::int` }).from(schema.clientLeads).where(eq(schema.clientLeads.clientId, clientId))
-      : await db.select({ count: sql<number>`count(*)::int` }).from(schema.leads);
-
-    // Recent calls — filtered if clientId
-    const recentCalls = clientId
-      ? await db.select().from(schema.calls).where(eq(schema.calls.clientId, clientId)).orderBy(desc(schema.calls.startedAt)).limit(5)
-      : await db.select().from(schema.calls).orderBy(desc(schema.calls.startedAt)).limit(5);
-
-    // Active retries
-    const activeRetries = clientId
-      ? await db.select({ count: sql<number>`count(*)::int` }).from(schema.retryQueue).where(eq(schema.retryQueue.clientId, clientId))
-      : await db.select({ count: sql<number>`count(*)::int` }).from(schema.retryQueue).where(eq(schema.retryQueue.status, "pending"));
+    const [kpiRow] = await db.select().from(schema.kpiDaily).where(and(eq(schema.kpiDaily.clientId, clientId), eq(schema.kpiDaily.date, today))).limit(1);
+    const totalLeads = await db.select({ count: sql<number>`count(*)::int` }).from(schema.clientLeads).where(eq(schema.clientLeads.clientId, clientId));
+    const recentCalls = await db.select().from(schema.calls).where(eq(schema.calls.clientId, clientId)).orderBy(desc(schema.calls.startedAt)).limit(5);
+    const activeRetries = await db.select({ count: sql<number>`count(*)::int` }).from(schema.retryQueue).where(and(eq(schema.retryQueue.clientId, clientId), eq(schema.retryQueue.status, "pending")));
 
     const stats = {
       pipeline: Object.fromEntries(pipeline.map((r) => [r.status || "unknown", r.count])),

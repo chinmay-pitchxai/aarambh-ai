@@ -1,6 +1,10 @@
 import { processRetries } from "./agents/retry-scheduler";
 import { checkDayBeforeReminders, checkDayOfReminders, checkNoShows } from "./agents/reminder-agent";
 import { createMemoryBus } from "./agents/bus";
+import Redis from "ioredis";
+import { startWorker, type WorkerHandle } from "./queue/worker";
+import { handleCallJob } from "./queue/workers/call-worker";
+import { db } from "./db";
 
 // ── Scheduler ──
 // Runs all periodic tasks via setInterval.
@@ -8,6 +12,8 @@ import { createMemoryBus } from "./agents/bus";
 let retryInterval: ReturnType<typeof setInterval> | null = null;
 let reminderInterval: ReturnType<typeof setInterval> | null = null;
 let noShowInterval: ReturnType<typeof setInterval> | null = null;
+let callWorker: WorkerHandle | null = null;
+let workerRedis: Redis | null = null;
 
 function timestamp(): string {
   return new Date().toISOString();
@@ -64,6 +70,16 @@ export function startScheduler() {
   // Every 60s: detect no-shows
   noShowInterval = setInterval(runNoShows, 60_000);
 
+  // Calls are processed outside web requests so the dashboard stays responsive
+  // while Vobiz and the voice agent run.
+  workerRedis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
+    connectTimeout: 2_000,
+    maxRetriesPerRequest: null,
+  });
+  callWorker = startWorker(workerRedis, "call-init", async (job, ctx) => {
+    await handleCallJob(db, ctx.queue, job as never);
+  }, { workerId: "aarambhai-call-worker", concurrency: 3 });
+
   console.log(`[${timestamp()}] [scheduler] intervals set: retries=60s, reminders=5min, noShows=60s`);
 }
 
@@ -74,6 +90,10 @@ export function stopScheduler() {
   retryInterval = null;
   reminderInterval = null;
   noShowInterval = null;
+  void callWorker?.stop();
+  callWorker = null;
+  workerRedis?.disconnect();
+  workerRedis = null;
   console.log(`[${timestamp()}] [scheduler] stopped`);
 }
 

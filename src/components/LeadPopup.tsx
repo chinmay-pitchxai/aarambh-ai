@@ -36,6 +36,15 @@ interface LeadPopupData {
     body: string;
     sentAt: string;
   }>;
+  insights: {
+    summary: string;
+    nextStep: { title: string; reason: string; action: string };
+    generatedBy: "ai" | "rules";
+  };
+}
+
+function isAiSpeaker(role: string) {
+  return ["agent", "assistant", "ai", "bot"].includes(role.toLowerCase());
 }
 
 function formatDuration(sec: number) {
@@ -99,7 +108,11 @@ export default function LeadPopup({ leadId, onClose }: { leadId: string; onClose
     setLoading(true);
     fetch(`/api/leads/${leadId}`, { signal: ctrl.signal })
       .then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); })
-      .then((d) => { if (d.error) throw new Error(d.error); setData(d); })
+      .then((d) => {
+        if (d.error) throw new Error(d.error);
+        setData(d);
+        setExpandedCall(d.calls?.[0]?.id || null);
+      })
       .catch((e) => { if (e.name !== "AbortError") setError(e.message); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
@@ -231,6 +244,25 @@ export default function LeadPopup({ leadId, onClose }: { leadId: string; onClose
                     ))}
                   </div>
 
+                  {/* AI summary and recommended action */}
+                  {data?.insights && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1.15fr .85fr", gap: 12 }}>
+                      <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 12, padding: 16 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)" }}>Lead summary</div>
+                          <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent)", background: "var(--accent-soft)", borderRadius: 10, padding: "3px 7px", letterSpacing: ".06em" }}>AI</span>
+                        </div>
+                        <p style={{ margin: 0, color: "var(--text)", fontSize: 13, lineHeight: 1.65 }}>{data.insights.summary}</p>
+                      </div>
+                      <div style={{ background: "var(--accent-soft)", border: "1px solid var(--accent)", borderRadius: 12, padding: 16 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--accent)", marginBottom: 8 }}>Recommended next step</div>
+                        <div style={{ fontSize: 14, fontWeight: 650, color: "var(--text)", marginBottom: 6 }}>{data.insights.nextStep.title}</div>
+                        <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{data.insights.nextStep.reason}</p>
+                        <div style={{ fontSize: 12, color: "var(--text)", lineHeight: 1.5 }}><span style={{ color: "var(--accent)", fontWeight: 700 }}>→</span> {data.insights.nextStep.action}</div>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Talking points */}
                   <div style={{ background: "var(--accent-soft)", border: "1px solid var(--accent)", borderRadius: 12, padding: 16 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--accent)", marginBottom: 10 }}>Talking Points</div>
@@ -307,13 +339,17 @@ export default function LeadPopup({ leadId, onClose }: { leadId: string; onClose
                           ))}
                         </div>
                       )}
-                      {call.recordingUrl && (
-                        <div style={{ marginTop: 10 }}>
-                          <audio controls src={call.recordingUrl} style={{ width: "100%", height: 36, borderRadius: 8 }} />
-                        </div>
-                      )}
+                      <div style={{ marginTop: 14 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 8 }}>Call recording</div>
+                        {call.recordingUrl ? (
+                          <audio controls preload="metadata" src={call.recordingUrl} style={{ width: "100%", height: 38, borderRadius: 8 }} />
+                        ) : (
+                          <div style={{ padding: "10px 12px", border: "1px dashed var(--border)", borderRadius: 9, color: "var(--text-light)", fontSize: 11 }}>Recording is not available for this call.</div>
+                        )}
+                      </div>
                       {call.transcript && call.transcript.length > 0 && (
                         <div style={{ marginTop: 12 }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 8 }}>Conversation transcript</div>
                           <button
                             onClick={() => setExpandedCall(expandedCall === call.id ? null : call.id)}
                             style={{
@@ -324,15 +360,17 @@ export default function LeadPopup({ leadId, onClose }: { leadId: string; onClose
                             {expandedCall === call.id ? "▲ Hide transcript" : "▼ Show transcript"}
                           </button>
                           {expandedCall === call.id && (
-                            <div style={{ marginTop: 10, padding: 12, background: "var(--surface)", borderRadius: 10, border: "1px solid var(--border)", fontSize: 12, lineHeight: 1.7, maxHeight: 240, overflow: "auto" }}>
-                              {call.transcript.map((t, i) => (
-                                <div key={i} style={{ marginBottom: 6, padding: "6px 8px", background: t.role === "agent" ? "var(--accent-soft)" : "var(--terracotta-soft)", borderRadius: 6 }}>
-                                  <span style={{ fontWeight: 600, color: t.role === "agent" ? "var(--accent)" : "var(--terracotta)", textTransform: "capitalize", fontSize: 10 }}>
-                                    {t.role === "agent" ? "AI" : "Prospect"}
-                                  </span>
-                                  <span style={{ marginLeft: 6, color: "var(--text)" }}>{t.text}</span>
-                                </div>
-                              ))}
+                            <div style={{ marginTop: 10, padding: 14, background: "var(--surface)", borderRadius: 10, border: "1px solid var(--border)", fontSize: 12, lineHeight: 1.55, maxHeight: 300, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+                              {call.transcript.map((turn, index) => {
+                                const ai = isAiSpeaker(turn.role);
+                                const personName = [lead?.firstName, lead?.lastName].filter(Boolean).join(" ") || "Lead";
+                                return (
+                                  <div key={index} style={{ display: "flex", flexDirection: "column", alignItems: ai ? "flex-end" : "flex-start" }}>
+                                    <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: ai ? "var(--accent)" : "var(--terracotta)", margin: "0 6px 4px" }}>{ai ? "Aarambh AI" : personName}</span>
+                                    <div style={{ maxWidth: "82%", padding: "9px 11px", color: "var(--text)", background: ai ? "var(--accent-soft)" : "var(--terracotta-soft)", border: `1px solid ${ai ? "var(--accent)" : "var(--border)"}`, borderRadius: ai ? "12px 12px 3px 12px" : "12px 12px 12px 3px" }}>{turn.text}</div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         </div>

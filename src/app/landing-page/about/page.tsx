@@ -210,7 +210,7 @@ export default function AboutPage() {
           <h2 style={{ fontSize: 28, fontWeight: 400, color: "var(--text)", marginBottom: 16, fontFamily: "Playfair Display, serif" }}>Join Us on This Journey</h2>
           <p style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 28 }}>We&apos;re hiring across engineering, product, and growth. Come build the future of B2B outbound.</p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-            <Link href="/dashboard" className="btn-lift" style={{
+            <Link href="/auth/login" className="btn-lift" style={{
               background: "var(--accent)", color: "#fff", textDecoration: "none",
               padding: "12px 28px", fontSize: 13, borderRadius: 8, fontWeight: 500,
               fontFamily: "Playfair Display, serif",

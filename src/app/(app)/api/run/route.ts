@@ -5,9 +5,12 @@ import { rankerAgent } from "@/backend/agents/ranker";
 import { consentAgent } from "@/backend/agents/consent";
 import { dialerAgent } from "@/backend/agents/dialer";
 import { nudgeAgent } from "@/backend/agents/nudge";
+import { getSession } from "@/backend/auth";
 
 
 export async function POST(req: NextRequest) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   let body: unknown;
   try {
     body = await req.json();
@@ -15,15 +18,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { clientId, icpTags, batchSize } = body as {
-    clientId?: string;
+  const { icpTags, batchSize } = body as {
     icpTags?: unknown;
     batchSize?: unknown;
   };
-
-  if (!clientId || typeof clientId !== "string" || clientId.trim().length === 0) {
-    return NextResponse.json({ error: "clientId required" }, { status: 400 });
-  }
+  const clientId = session.activeOrganizationId;
   if (!Array.isArray(icpTags) || icpTags.length === 0 || !icpTags.every((t) => typeof t === "string")) {
     return NextResponse.json({ error: "icpTags must be non-empty string array" }, { status: 400 });
   }

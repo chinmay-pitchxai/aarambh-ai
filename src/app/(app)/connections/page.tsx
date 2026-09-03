@@ -9,20 +9,20 @@ interface Integration {
   icon: string;
   category: string;
   color: string;
+  via?: string;
 }
 
 const INTEGRATIONS: Integration[] = [
-  { id: "gmail", name: "Gmail", desc: "Email outreach + calendar access", icon: "✉", category: "Email", color: "#C17C60" },
-  { id: "whatsapp", name: "WhatsApp", desc: "Send messages and nurture leads", icon: "◈", category: "Messaging", color: "#7A9A7E" },
-  { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B" },
-  { id: "zoom", name: "Zoom", desc: "Schedule and host video calls", icon: "◎", category: "Meetings", color: "#4A8BC2" },
-  { id: "microsoft_teams", name: "Microsoft Teams", desc: "Chat, meet, and collaborate", icon: "◻", category: "Meetings", color: "#6264A7" },
-  { id: "slack", name: "Slack", desc: "Get alerts for bookings & failures", icon: "⬢", category: "Ops", color: "#B0A9A0" },
-  { id: "hubspot", name: "HubSpot", desc: "Sync contacts & deals to CRM", icon: "⬡", category: "CRM", color: "#C9A86A" },
-  { id: "salesforce", name: "Salesforce", desc: "Enterprise CRM sync", icon: "◆", category: "CRM", color: "#4A8BC2" },
+  { id: "whatsapp", name: "WhatsApp Business", desc: "Send messages and nurture leads via WhatsApp", icon: "◈", category: "Messaging", color: "#7A9A7E", via: "Composio" },
+  { id: "gmail", name: "Gmail", desc: "Email outreach and calendar access via Gmail", icon: "✉", category: "Email", color: "#C17C60", via: "Composio" },
+  { id: "google_calendar", name: "Google Calendar", desc: "Schedule meetings and check availability", icon: "📅", category: "Meetings", color: "#4285F4", via: "Composio" },
+  { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B", via: "Composio" },
+  { id: "google_maps", name: "Google Maps", desc: "Location data for lead research and targeting", icon: "📍", category: "Data", color: "#EA4335", via: "Composio" },
+  { id: "slack", name: "Slack", desc: "Team notifications and collaboration", icon: "⚡", category: "Messaging", color: "#611f69", via: "Composio" },
+  { id: "hubspot", name: "HubSpot", desc: "CRM sync for contacts and deals", icon: "⬡", category: "CRM", color: "#FF7A59", via: "Composio" },
+  { id: "notion", name: "Notion", desc: "Team workspace and documentation", icon: "▤", category: "Productivity", color: "#2D2D2D", via: "Composio" },
+  { id: "vobiz", name: "Vobiz", desc: "Phone calls and voice outreach", icon: "📞", category: "Phone", color: "#6B8E7B", via: "API" },
 ];
-
-const CLIENT_ID = "demo";
 
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Record<string, { connected: boolean; status?: string; accountEmail?: string }>>({});
@@ -32,13 +32,35 @@ export default function ConnectionsPage() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [postPayment, setPostPayment] = useState(false);
+  const [tenantId, setTenantId] = useState<string>("demo");
+  const [needsSetup, setNeedsSetup] = useState<Record<string, boolean>>({});
+  const [vobizDetail, setVobizDetail] = useState<string | null>(null);
 
-  const fetchAllStatuses = useCallback(async () => {
+  const fetchAllStatuses = useCallback(async (tid: string) => {
     try {
       const results: Record<string, { connected: boolean; status?: string; accountEmail?: string }> = {};
       for (const app of INTEGRATIONS) {
+        if (app.id === "vobiz") {
+          // Vobiz is a direct API integration — status comes from its own probe.
+          try {
+            const res = await fetch("/api/v1/integrations/vobiz/status", { credentials: "include" });
+            if (res.ok) {
+              const data = await res.json();
+              results[app.id] = {
+                connected: data.connected === true,
+                status: data.connected ? "active" : data.error || "not configured",
+              };
+            } else {
+              results[app.id] = { connected: false };
+            }
+          } catch {
+            results[app.id] = { connected: false };
+          }
+          continue;
+        }
         try {
-          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=${CLIENT_ID}`);
+          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=${encodeURIComponent(tid)}`);
           if (res.ok) {
             const data = await res.json();
             results[app.id] = { connected: data.connected, status: data.status, accountEmail: data.accountEmail };
@@ -61,30 +83,111 @@ export default function ConnectionsPage() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("connected");
     const errParam = params.get("error");
+    const activated = params.get("activated");
 
+    if (activated === "true") {
+      setPostPayment(true);
+      setSuccess("Subscription activated! Connect your accounts to start automating.");
+      window.history.replaceState({}, "", "/connections");
+    }
     if (connected) {
       setSuccess(`${connected} connected successfully!`);
       window.history.replaceState({}, "", "/connections");
-      fetchAllStatuses();
     }
     if (errParam) {
       setError(`Connection failed: ${decodeURIComponent(errParam)}`);
       window.history.replaceState({}, "", "/connections");
     }
-    fetchAllStatuses();
+
+    // Resolve the real tenant (org) for Composio lookups — never hardcode "demo".
+    fetch("/api/auth/session", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const tid = data?.org?.id || "demo";
+        setTenantId(tid);
+        fetchAllStatuses(tid);
+        if (connected) fetchAllStatuses(tid);
+      })
+      .catch(() => fetchAllStatuses("demo"));
   }, [fetchAllStatuses]);
 
+  async function handleVobizCheck() {
+    setConnecting("vobiz");
+    setError(null);
+    setSuccess(null);
+    setVobizDetail(null);
+    try {
+      const res = await fetch("/api/v1/integrations/vobiz/status", { credentials: "include" });
+      const data = await res.json();
+      if (data.connected) {
+        const bits = [
+          `API reachable (${data.latencyMs ?? "?"}ms)`,
+          data.balance ? `balance ${data.balance.balance} ${data.balance.currency}` : null,
+          data.hasProvisionedNumber ? "number provisioned" : "no number provisioned yet",
+        ].filter(Boolean);
+        setVobizDetail(bits.join(" · "));
+        setSuccess("Vobiz is connected and authenticated.");
+        setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
+      } else {
+        setVobizDetail(data.error || "Not configured");
+        setError(data.setup || data.error || "Vobiz is not connected");
+        setConnections((prev) => ({ ...prev, vobiz: { connected: false, status: data.error } }));
+      }
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  async function handleCalendarSetup() {
+    setConnecting("google_calendar");
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/v1/calendar/auth-config", { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to set up Google Calendar");
+        return;
+      }
+      setNeedsSetup((prev) => ({ ...prev, google_calendar: false }));
+      setSuccess(data.message || "Google Calendar is ready to connect.");
+      // Immediately start the OAuth connect flow.
+      await handleConnect("google_calendar");
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setConnecting(null);
+    }
+  }
+
   async function handleConnect(integration: string) {
+    if (integration === "vobiz") {
+      await handleVobizCheck();
+      return;
+    }
     setConnecting(integration);
     setError(null);
     setSuccess(null);
 
     try {
-      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${CLIENT_ID}`);
+      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
       const data = await res.json();
 
       if (!res.ok) {
         setError(data.error || "Failed to initiate connection");
+        return;
+      }
+      if (data.needsConfig) {
+        // No Composio auth config exists. For Google Calendar we can create
+        // it automatically — offer the one-click setup.
+        if (integration === "google_calendar") {
+          setNeedsSetup((prev) => ({ ...prev, [integration]: true }));
+          setError("Google Calendar needs a one-time setup in Composio. Click “Set up Google Calendar” below to create it, then connect.");
+        } else {
+          setError(data.error || `No auth config found for "${integration}". Create one in the Composio dashboard first.`);
+        }
         return;
       }
       if (data.alreadyConnected) {
@@ -114,7 +217,7 @@ export default function ConnectionsPage() {
       const res = await fetch("/api/composio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "disconnect", integration, clientId: CLIENT_ID }),
+        body: JSON.stringify({ action: "disconnect", integration, clientId: tenantId }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -144,9 +247,25 @@ export default function ConnectionsPage() {
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 28, fontWeight: 300, letterSpacing: "0.02em", margin: 0 }}>Connections</h1>
         <p style={{ color: "var(--text-dim)", fontSize: 14, marginTop: 6, letterSpacing: "0.02em" }}>
-          Connect your tools — one click via Composio
+          {postPayment
+            ? "Connect your accounts to start automating"
+            : "Connect your tools — one click via Composio"}
         </p>
       </div>
+
+      {postPayment && (
+        <div style={{
+          marginBottom: 24, padding: 16, borderRadius: 12,
+          background: "rgba(122,154,126,0.08)", border: "1px solid rgba(122,154,126,0.25)",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <span style={{ fontSize: 18 }}>✓</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--green)" }}>Subscription activated</div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>Connect at least one channel below to begin lead automation.</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap", alignItems: "center" }}>
         <input
@@ -199,7 +318,7 @@ export default function ConnectionsPage() {
       {loading ? (
         <div style={{ padding: 60, textAlign: "center", color: "var(--text-light)", letterSpacing: "0.06em", fontSize: 13, textTransform: "uppercase" }}>Loading —</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
           {filtered.map((app) => {
             const status = connections[app.id];
             const isConnected = status?.connected || false;
@@ -217,7 +336,9 @@ export default function ConnectionsPage() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", letterSpacing: "0.02em" }}>{app.name}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.06em", textTransform: "uppercase" }}>{app.category}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                      {app.via ? `${app.category} · ${app.via}` : app.category}
+                    </div>
                   </div>
                   {isConnected && <span style={{ fontSize: 11, color: "var(--green)", background: "rgba(122,154,126,0.12)", padding: "4px 8px", borderRadius: 10, border: "1px solid rgba(122,154,126,0.2)" }}>●</span>}
                 </div>
@@ -227,20 +348,44 @@ export default function ConnectionsPage() {
                 {isConnected && status?.accountEmail && (
                   <div style={{ fontSize: 11, color: "var(--text-light)" }}>{status.accountEmail}</div>
                 )}
+                {app.id === "vobiz" && vobizDetail && (
+                  <div style={{ fontSize: 11, color: "var(--text-light)" }}>{vobizDetail}</div>
+                )}
+                {app.id === "google_calendar" && needsSetup[app.id] && !isConnected && (
+                  <button
+                    onClick={handleCalendarSetup}
+                    disabled={connecting === app.id}
+                    style={{
+                      width: "100%", padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", background: "var(--amber)", color: "#fff", border: "1px solid var(--amber)",
+                      opacity: connecting === app.id ? 0.5 : 1,
+                    }}
+                  >
+                    {connecting === app.id ? "..." : "Set up Google Calendar"}
+                  </button>
+                )}
 
                 <button
-                  onClick={() => isConnected ? handleDisconnect(app.id) : handleConnect(app.id)}
+                  onClick={() => {
+                    if (app.id === "vobiz") {
+                      handleVobizCheck();
+                    } else if (isConnected) {
+                      handleDisconnect(app.id);
+                    } else {
+                      handleConnect(app.id);
+                    }
+                  }}
                   disabled={connecting === app.id}
                   style={{
                     marginTop: "auto", width: "100%", padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
                     cursor: "pointer",
-                    background: isConnected ? "var(--surface-2)" : "var(--accent)",
-                    color: isConnected ? "var(--text-dim)" : "#fff",
-                    border: `1px solid ${isConnected ? "var(--border)" : "var(--accent)"}`,
+                    background: isConnected && app.id !== "vobiz" ? "var(--surface-2)" : "var(--accent)",
+                    color: isConnected && app.id !== "vobiz" ? "var(--text-dim)" : "#fff",
+                    border: `1px solid ${isConnected && app.id !== "vobiz" ? "var(--border)" : "var(--accent)"}`,
                     opacity: connecting === app.id ? 0.5 : 1,
                   }}
                 >
-                  {connecting === app.id ? "..." : isConnected ? "Disconnect" : "Connect"}
+                  {connecting === app.id ? "..." : app.id === "vobiz" ? "Check connection" : isConnected ? "Disconnect" : "Connect"}
                 </button>
               </div>
             );

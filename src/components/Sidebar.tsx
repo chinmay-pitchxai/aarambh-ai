@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/components/AuthProvider";
 
 const NAV = [
   { href: "/dashboard", label: "Dashboard", icon: "grid" },
@@ -23,6 +24,7 @@ const ICONS: Record<string, JSX.Element> = {
 export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   const path = usePathname();
   const [callsToday, setCallsToday] = useState<number | null>(null);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     fetch("/api/stats")
@@ -75,21 +77,45 @@ export default function Sidebar({ collapsed, onToggle }: { collapsed: boolean; o
       </nav>
 
       <div style={{ position: "absolute", bottom: 28, left: 0, right: 0, padding: collapsed ? "0 12px" : "0 24px" }}>
-        {collapsed ? (
-          <div style={{ display: "flex", justifyContent: "center" }}><div className="pulse-dot" /></div>
-        ) : (
-          <div style={{
-            background: "var(--warm)", borderRadius: 12, padding: 16,
-            border: "1px solid var(--border)",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-              <div className="pulse-dot" />
-              <span style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 500 }}>System Online</span>
-            </div>
-            <div style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.02em" }}>
-              Pipeline active — {callsToday === null ? "…" : `${callsToday} calls today`}
-            </div>
+        {user && !collapsed && (
+          <div style={{ marginBottom: 12, fontSize: 12, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {user.email}
           </div>
+        )}
+        {collapsed ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+            <div className="pulse-dot" />
+            {user && (
+              <button onClick={logout} title="Logout" style={{ background: "none", border: "none", color: "var(--text-dim)", cursor: "pointer", padding: 4 }}>
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              </button>
+            )}
+          </div>
+        ) : (
+          <>
+            <div style={{
+              background: "var(--warm)", borderRadius: 12, padding: 16,
+              border: "1px solid var(--border)", marginBottom: 12,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div className="pulse-dot" />
+                <span style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.06em", textTransform: "uppercase", fontWeight: 500 }}>System Online</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.02em" }}>
+                Pipeline active — {callsToday === null ? "…" : `${callsToday} calls today`}
+              </div>
+            </div>
+            {user && (
+              <button onClick={logout} style={{
+                width: "100%", background: "none", border: "1px solid var(--border)", borderRadius: 8,
+                padding: "8px 0", color: "var(--text-dim)", cursor: "pointer", fontSize: 12,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}>
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Logout
+              </button>
+            )}
+          </>
         )}
       </div>
     </aside>

@@ -2,48 +2,34 @@ import type { Agent, AgentContext, DialerInput, DialerOutput, callOutcome } from
 import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { getVobizClient } from "../integrations/vobiz";
+import { requireVobizConfig, serverConfig } from "../config";
 
 // ── Dialer Agent ──
-// Vobiz telephony + Gemini Live voice
-// 6 outcomes: no_answer, failed, not_interested, interested, booked, picked_no_response
-
-const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
+// Submits a REAL outbound call through Vobiz (api.vobiz.ai).
+// The final outcome arrives asynchronously via the provider status/hangup
+// callback → /api/v1/webhooks/vobiz → outcome router. This agent NEVER
+// fabricates outcomes: it records the call as provider-pending and returns
+// outcome "initiated". Callers must not schedule follow-ups from this return
+// value; the webhook-driven outcome router owns all post-call actions.
 
 async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
-  const apiKey = process.env.VOBIZ_API_KEY;
-  if (!apiKey) {
-    return { callId: `dev-${randomUUID().slice(0, 8)}`, status: "connected" };
-  }
+  const { fromNumber } = requireVobizConfig();
+  const client = getVobizClient();
+  const answerUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
 
-  const res = await fetch(`${VOBIZ_API}/calls`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      to: phoneE164,
-      from: process.env.VOBIZ_FROM_NUMBER,
-      webhook: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
-    }),
+  const result = await client.initiateCall(fromNumber, phoneE164, answerUrl, {
+    timeout: 30,
+    callbackUrl: answerUrl,
   });
-
-  if (!res.ok) throw new Error(`Vobiz dial failed: ${res.status}`);
-  const data = await res.json();
-  return { callId: data.call_id, status: data.status };
+  return { callId: result.callId, status: result.status };
 }
 
-async function getTranscript(callId: string): Promise<Array<{ role: string; text: string }>> {
-  const apiKey = process.env.VOBIZ_API_KEY;
-  if (!apiKey) return [];
-
-  const res = await fetch(`${VOBIZ_API}/calls/${callId}/transcript`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.transcript || [];
+async function getTranscript(_callId: string): Promise<Array<{ role: string; text: string }>> {
+  // Transcripts are produced by our own voice pipeline (Gemini Live) and
+  // attached to the call record, not by the telephony provider.
+  void _callId;
+  return getVobizClient().getCallTranscript(_callId);
 }
 
 export const dialerAgent: Agent<DialerInput, DialerOutput> = {
@@ -93,57 +79,38 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
       }
     }
 
-    // 4. Dial
+    // 4. Dial via the real Vobiz API. The provider returns a call UUID;
+    // the terminal outcome arrives later through its status/hangup callback.
     const { callId, status } = await dialVobiz(lead.phoneE164);
-    ctx.log("dialer connected", { callId, status });
+    ctx.log("dialer submitted real call", { callId, status });
 
-    // 5. Simulate outcome
-    const outcome = simulateOutcome(status);
-    const durationSec = outcome === "no_answer" ? 0 : Math.floor(Math.random() * 300) + 30;
+    // Record the call as provider-pending. Outcome, duration, transcript,
+    // analysis and recording are filled in by the webhook-driven flow —
+    // never simulated here.
+    const outcome: callOutcome = "initiated";
+    const summary = `Outbound call submitted to provider (uuid ${callId}). Awaiting provider outcome via webhook.`;
+    const bant = { budget: "unknown", authority: "unknown", need: "unknown", timeline: "unknown" };
+    const sentiment = "pending";
 
-    // 6. Get transcript if connected
-    const transcript = durationSec > 0 ? await getTranscript(callId) : [];
-
-    // 7. Analyze via LLM Lab
-    let bant = { budget: "unknown", authority: "unknown", need: "unknown", timeline: "unknown" };
-    let sentiment = "neutral";
-    let summary = "";
-
-    if (transcript.length > 0) {
-      try {
-        const { llmLabAgent } = await import("./llm-lab");
-        const analysis = await llmLabAgent.execute(
-          { action: "analyze_transcript", transcript },
-          ctx,
-        );
-        bant = analysis.bant || bant;
-        sentiment = analysis.sentiment || sentiment;
-        summary = analysis.summary || summary;
-      } catch {
-        ctx.log("LLM analysis failed, using defaults");
-      }
-    }
-
-    // 8. Store call
+    // 7. Store pending call record
     const callIdDb = randomUUID();
     await db.insert(schema.calls).values({
       id: callIdDb,
       leadId,
       clientId,
       vobizCallId: callId,
-      outcome,
-      durationSec,
-      transcript,
+      outcome: null,
+      durationSec: null,
+      transcript: [],
       bant,
       sentiment,
       pitchUsed: finalPitch,
       summary,
       attemptNumber,
       startedAt: new Date(),
-      endedAt: new Date(Date.now() + durationSec * 1000),
     });
 
-    // 9. Update memory
+    // 8. Update memory (call submitted, outcome pending)
     const mem = await ctx.store.recall(leadId);
     mem.calls.push({ callId: callIdDb, outcome, summary, bant, at: new Date().toISOString() });
     mem.totalAttempts++;
@@ -151,34 +118,15 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
     mem.lastPitch = finalPitch;
     await ctx.store.saveMemory(mem);
 
-    // 10. Update lead status + lastCallAt
-    const statusMap: Record<string, string> = {
-      booked: "qualified",
-      not_interested: "parked",
-      picked_no_response: "contacted",
-    };
+    // 9. Update lead contact bookkeeping only — no fabricated status change
     await db
       .update(schema.clientLeads)
       .set({
-        status: (statusMap[outcome] || "contacted") as typeof schema.clientLeads.status.enumValues[number],
         lastCallAt: new Date(),
         attemptCount: attemptNumber,
       })
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
 
-    return { callId: callIdDb, outcome, durationSec, bant, sentiment, summary };
+    return { callId: callIdDb, outcome, durationSec: 0, bant, sentiment, summary };
   },
 };
-
-function simulateOutcome(vobizStatus: string): callOutcome {
-  if (vobizStatus === "no_answer" || vobizStatus === "busy") return vobizStatus === "busy" ? "failed" : "no_answer";
-  if (vobizStatus === "connected") {
-    const r = Math.random();
-    if (r < 0.2) return "not_interested";
-    if (r < 0.4) return "interested";
-    if (r < 0.6) return "booked";
-    if (r < 0.8) return "picked_no_response";
-    return "no_answer";
-  }
-  return "failed";
-}

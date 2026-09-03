@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 interface Stats {
   today: {
@@ -23,6 +23,10 @@ export default function WalletBalancePage() {
 
   const totalCost = stats ? stats.today.costApollo + stats.today.costVobiz : 0;
 
+  const handleAddFunds = useCallback(() => {
+    window.location.href = "/connections";
+  }, []);
+
   return (
     <div>
       <div className="section-header">
@@ -43,7 +47,7 @@ export default function WalletBalancePage() {
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
             <button className="btn-secondary" style={{ padding: "10px 18px", fontSize: 12 }}>History</button>
-            <button className="btn-primary" style={{ padding: "10px 20px", fontSize: 12 }}>+ Add Funds</button>
+            <button className="btn-primary" onClick={handleAddFunds} style={{ padding: "10px 20px", fontSize: 12 }}>+ Add Funds</button>
           </div>
         </div>
 

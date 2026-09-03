@@ -118,6 +118,7 @@ export interface PipelineResult {
 // ── Call Outcome / Lead Status enums ──
 
 export type callOutcome =
+  | "initiated"
   | "interested"
   | "not_interested"
   | "no_answer"

@@ -10,7 +10,8 @@ const WA_API = "https://graph.facebook.com/v19.0";
 const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 const WA_TOKEN = process.env.WHATSAPP_API_TOKEN;
 
-async function sendWhatsAppReminder(phoneE164: string, templateName: string, params: string[]): Promise<string | null> {
+async function sendWhatsAppReminder(phoneE164: string | null, templateName: string, params: string[]): Promise<string | null> {
+  if (!phoneE164) return null;
   if (!WA_PHONE_ID || !WA_TOKEN) {
     console.log(`[WA-STUB] To: ${phoneE164}, Template: ${templateName}`);
     return `wa-stub-${randomUUID().slice(0, 8)}`;

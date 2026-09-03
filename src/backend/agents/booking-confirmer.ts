@@ -1,10 +1,23 @@
 import type { AgentContext } from "./types";
+import { getVobizClient } from "../integrations/vobiz";
+import { requireVobizConfig, serverConfig } from "../config";
 
 // ── Booking Confirmer Agent ──
 // Calls the lead to confirm a scheduled meeting (NOT sends a link).
-// Outcomes: interested/booked → create booking + WhatsApp; not_interested → lost; no_answer/failed → retry in 4h.
+// Submits a REAL call through Vobiz. The terminal outcome arrives via the
+// provider status/hangup callback and is routed by the outcome router, which
+// owns booking creation. This agent NEVER fabricates call outcomes and NEVER
+// creates bookings from anything but a confirmed provider outcome.
 
-const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
+async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
+  const { fromNumber } = requireVobizConfig();
+  const answerUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
+  const result = await getVobizClient().initiateCall(fromNumber, phoneE164, answerUrl, {
+    timeout: 30,
+    callbackUrl: answerUrl,
+  });
+  return { callId: result.callId, status: result.status };
+}
 
 interface ConfirmBookingInput {
   leadId: string;
@@ -27,44 +40,6 @@ interface BookingRecord {
   scheduledAt: Date | null;
   notes: string | null;
   createdAt: Date;
-}
-
-async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
-  const apiKey = process.env.VOBIZ_API_KEY;
-  if (!apiKey) {
-    const { randomUUID } = await import("crypto");
-    return { callId: `dev-${randomUUID().slice(0, 8)}`, status: "connected" };
-  }
-
-  const res = await fetch(`${VOBIZ_API}/calls`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      to: phoneE164,
-      from: process.env.VOBIZ_FROM_NUMBER,
-      webhook: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
-    }),
-  });
-
-  if (!res.ok) throw new Error(`Vobiz dial failed: ${res.status}`);
-  const data = await res.json();
-  return { callId: data.call_id, status: data.status };
-}
-
-function simulateOutcome(vobizStatus: string): string {
-  if (vobizStatus === "no_answer" || vobizStatus === "busy") {
-    return vobizStatus === "busy" ? "failed" : "no_answer";
-  }
-  if (vobizStatus === "connected") {
-    const r = Math.random();
-    if (r < 0.25) return "not_interested";
-    if (r < 0.55) return "interested";
-    return "booked";
-  }
-  return "failed";
 }
 
 export async function confirmBooking(
@@ -120,99 +95,28 @@ Keep it under 30 seconds. Speak naturally and warmly.`;
     confirmationPitch = `Hi ${lead.firstName || "there"}, this is a quick call to confirm your upcoming meeting. Do you have a moment?`;
   }
 
-  // 4. Dial the lead
+  // 4. Submit the real confirmation call. The terminal outcome arrives via
+  // the provider status/hangup callback and is routed by the outcome router,
+  // which owns booking creation. Never book from a guessed outcome.
   const { callId: vobizCallId, status } = await dialVobiz(lead.phoneE164);
-  ctx.log("booking-confirmer connected", { vobizCallId, status });
+  ctx.log("booking-confirmer submitted real call", { vobizCallId, status });
 
-  // 5. Wait for call to end + determine outcome
-  const outcome = simulateOutcome(status);
-  const durationSec = outcome === "no_answer" ? 0 : Math.floor(Math.random() * 180) + 20;
-
-  // 6. Store call record
+  // 5. Store pending call record (outcome filled in by webhook flow)
   const callIdDb = randomUUID();
   await db.insert(schema.calls).values({
     id: callIdDb,
     leadId,
     clientId,
     vobizCallId,
-    outcome: outcome as "no_answer" | "failed" | "not_interested" | "interested" | "booked",
-    durationSec,
+    outcome: null,
+    durationSec: null,
     pitchUsed: confirmationPitch,
-    summary: `Booking confirmation call — outcome: ${outcome}`,
+    summary: `Booking confirmation call submitted (provider uuid ${vobizCallId}). Awaiting provider outcome via webhook.`,
     startedAt: new Date(),
-    endedAt: new Date(Date.now() + durationSec * 1000),
   });
 
-  // 7. Analyze outcome
-  if (outcome === "interested" || outcome === "booked") {
-    // Create booking record
-    const bookingId = `bk_${randomUUID().slice(0, 12)}`;
-    await db.insert(schema.bookings).values({
-      id: bookingId,
-      leadId,
-      clientId,
-      callId: callIdDb,
-      status: "scheduled",
-      scheduledAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // default: tomorrow
-      notes: `Confirmed via call ${callIdDb}`,
-    });
-
-    // Send confirmation WhatsApp
-    try {
-      const { nudgeAgent } = await import("./nudge");
-      await nudgeAgent.execute(
-        { leadId, clientId, callId: callIdDb, outcome, bant: { budget: "unknown", authority: "unknown", need: "unknown", timeline: "unknown" } },
-        ctx,
-      );
-    } catch {
-      ctx.log("WhatsApp confirmation send failed");
-    }
-
-    // Update clientLeads status
-    await db
-      .update(schema.clientLeads)
-      .set({ status: "qualified" })
-      .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
-
-    // Publish event
-    ctx.bus.publish({ type: "meeting.booked", leadId, clientId });
-
-    ctx.log("booking confirmed", { bookingId });
-    return { booked: true, bookingId };
-  }
-
-  if (outcome === "not_interested") {
-    // Update status to lost/parked
-    await db
-      .update(schema.clientLeads)
-      .set({ status: "parked" })
-      .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
-
-    ctx.bus.publish({ type: "meeting.cancelled", leadId, clientId });
-
-    ctx.log("booking cancelled — not interested", { leadId });
-    return { booked: false, reason: "not_interested" };
-  }
-
-  // no_answer or failed → schedule retry in 4 hours
-  const nextAttemptAt = new Date(Date.now() + 4 * 60 * 60 * 1000);
-
-  await db.insert(schema.retryQueue).values({
-    id: `retry_${randomUUID().slice(0, 12)}`,
-    leadId,
-    clientId,
-    callId: callIdDb,
-    attempt: 1,
-    reason: outcome,
-    nextAttemptAt,
-    maxAttempts: 2,
-    status: "pending",
-  });
-
-  ctx.bus.publish({ type: "retry.scheduled", leadId, clientId, nextAttemptAt: nextAttemptAt.toISOString() });
-
-  ctx.log("retry scheduled", { nextAttemptAt });
-  return { booked: false, reason: "retry_scheduled" };
+  ctx.log("confirmation call submitted — outcome pending via webhook", { callIdDb });
+  return { booked: false, reason: "call_submitted" };
 }
 
 export async function getUpcomingBookings(

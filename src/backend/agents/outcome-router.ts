@@ -2,12 +2,14 @@ import type { AgentContext, MessageBus } from "./types";
 import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { createNotificationForTenant, formatNotificationMessage } from "../services/notifications";
 
 // ── Outcome Router ──
 // Replaces the switch statement in pipeline.ts.
 // Handles every possible call outcome and routes to the correct next step.
 
 export type CallOutcome =
+  | "initiated"
   | "interested"
   | "not_interested"
   | "no_answer"
@@ -33,7 +35,8 @@ const WA_API = "https://graph.facebook.com/v19.0";
 const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
 const WA_TOKEN = process.env.WHATSAPP_API_TOKEN;
 
-async function sendWhatsApp(phoneE164: string, templateName: string, params: string[]): Promise<string | null> {
+async function sendWhatsApp(phoneE164: string | null, templateName: string, params: string[]): Promise<string | null> {
+  if (!phoneE164) return null;
   if (!WA_PHONE_ID || !WA_TOKEN) {
     console.log(`[WA-STUB] To: ${phoneE164}, Template: ${templateName}`);
     return `wa-stub-${randomUUID().slice(0, 8)}`;
@@ -160,7 +163,7 @@ async function sendInfo(
   leadId: string,
   clientId: string,
   callId: string,
-  lead: { phoneE164: string; firstName: string | null; company: string | null; email: string | null },
+  lead: { phoneE164: string | null; firstName: string | null; company: string | null; email: string | null },
   ctx: AgentContext,
 ): Promise<number> {
   let messagesSent = 0;
@@ -222,6 +225,15 @@ export async function routeOutcome(
   const currentAttempt = (cl?.attemptCount ?? 0) + 1;
 
   switch (outcome) {
+    // ── 0. INITIATED (call submitted, provider outcome pending) ──
+    // The real outcome arrives asynchronously via the Vobiz status/hangup
+    // callback, which re-enters this router with the terminal outcome.
+    // Do nothing here — never fabricate an outcome, never mark lost.
+    case "initiated": {
+      ctx.log("outcome-router: call in flight, awaiting provider callback", { leadId, callId });
+      return { nextAction: "wait_reply", nudgeSent: true };
+    }
+
     // ── 1. INTERESTED ──
     case "interested": {
       const messagesSent = await sendInfo(leadId, clientId, callId, lead, ctx);
@@ -232,6 +244,18 @@ export async function routeOutcome(
         .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
 
       ctx.bus.publish({ type: "reply.interested", leadId, clientId });
+
+      createNotificationForTenant(db, {
+        tenantId: clientId,
+        type: "interested",
+        title: "Lead Interested",
+        message: formatNotificationMessage("interested", {
+          leadName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || undefined,
+          company: lead.company ?? undefined,
+        }),
+        leadId,
+        callId,
+      }).catch(() => {});
 
       return { nextAction: "wait_reply", nudgeSent: true, messagesSent };
     }
@@ -336,6 +360,18 @@ export async function routeOutcome(
         .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
 
       ctx.bus.publish({ type: "meeting.booked", leadId, clientId });
+
+      createNotificationForTenant(db, {
+        tenantId: clientId,
+        type: "meeting_booked",
+        title: "Meeting Booked",
+        message: formatNotificationMessage("meeting_booked", {
+          leadName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || undefined,
+          company: lead.company ?? undefined,
+        }),
+        leadId,
+        callId,
+      }).catch(() => {});
 
       return { nextAction: "confirm_booking", nudgeSent: true, messagesSent: 1 };
     }

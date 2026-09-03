@@ -57,7 +57,7 @@ export default function LandingLayout({ children }: { children: React.ReactNode 
               </Link>
             ))}
             <Link
-              href="/dashboard"
+              href="/auth/login"
               className="btn-lift"
               style={{
                 background: "var(--accent)", color: "#fff", textDecoration: "none",
@@ -94,7 +94,7 @@ export default function LandingLayout({ children }: { children: React.ReactNode 
               </p>
             </div>
             {[
-              { title: "Product", items: [{ label: "Features", href: "/landing-page/features" }, { label: "Pricing", href: "/landing-page/pricing" }, { label: "Dashboard", href: "/dashboard" }] },
+              { title: "Product", items: [{ label: "Features", href: "/landing-page/features" }, { label: "Pricing", href: "/landing-page/pricing" }, { label: "Dashboard", href: "/auth/login" }] },
               { title: "Company", items: [{ label: "About", href: "/landing-page/about" }, { label: "Contact", href: "mailto:hello@aarambhai.com" }, { label: "Careers", href: "/landing-page/about" }] },
               { title: "Legal", items: [{ label: "Privacy", href: "#" }, { label: "Terms", href: "#" }, { label: "DPA", href: "#" }] },
             ].map((col) => (
