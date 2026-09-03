@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState, Suspense } from "react";
+import { useState, Suspense, useEffect } from "react";
 
 function LoginForm() {
   const router = useRouter();
@@ -12,6 +12,11 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Clear any stale session cookie on mount
+  useEffect(() => {
+    document.cookie = "session=; path=/; max-age=0";
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -276,14 +281,6 @@ function LoginForm() {
         }}>
           Sign up
         </Link>
-      </div>
-      <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
-        <button
-          onClick={() => { document.cookie = "session=; path=/; max-age=0"; window.location.reload(); }}
-          style={{ background: "none", border: "none", color: "var(--text-light)", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
-        >
-          Clear session &amp; retry
-        </button>
       </div>
     </div>
   );
