@@ -4,6 +4,7 @@ import { createMemoryBus } from "./agents/bus";
 import Redis from "ioredis";
 import { startWorker, type WorkerHandle } from "./queue/worker";
 import { handleCallJob } from "./queue/workers/call-worker";
+import { handleOutcomeJob } from "./queue/workers/outcome-worker";
 import { db } from "./db";
 import { processCallbacks } from "./services/callback-scheduler";
 
@@ -15,6 +16,7 @@ let reminderInterval: ReturnType<typeof setInterval> | null = null;
 let noShowInterval: ReturnType<typeof setInterval> | null = null;
 let callbackInterval: ReturnType<typeof setInterval> | null = null;
 let callWorker: WorkerHandle | null = null;
+let outcomeWorker: WorkerHandle | null = null;
 let workerRedis: Redis | null = null;
 
 function timestamp(): string {
@@ -100,7 +102,11 @@ export function startScheduler() {
     await handleCallJob(db, ctx.queue, job as never);
   }, { workerId: "aarambhai-call-worker", concurrency: 3 });
 
-  console.log(`[${timestamp()}] [scheduler] intervals set: retries=60s, reminders=5min, noShows=60s, callbacks=60s`);
+  outcomeWorker = startWorker(workerRedis, "call-outcome", async (job, ctx) => {
+    await handleOutcomeJob(db, ctx.queue, job as never);
+  }, { workerId: "aarambhai-outcome-worker", concurrency: 5 });
+
+  console.log(`[${timestamp()}] [scheduler] intervals set: retries=60s, reminders=5min, noShows=60s, callbacks=60s, workers=call-init+call-outcome`);
 }
 
 export function stopScheduler() {
@@ -114,6 +120,8 @@ export function stopScheduler() {
   callbackInterval = null;
   void callWorker?.stop();
   callWorker = null;
+  void outcomeWorker?.stop();
+  outcomeWorker = null;
   workerRedis?.disconnect();
   workerRedis = null;
   console.log(`[${timestamp()}] [scheduler] stopped`);

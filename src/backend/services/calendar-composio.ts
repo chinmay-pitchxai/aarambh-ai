@@ -25,6 +25,7 @@ export interface CalendarEvent {
   attendees: string[];
   description?: string;
   htmlLink?: string;
+  meetLink?: string;
   status: string;
 }
 
@@ -148,6 +149,15 @@ function mapGoogleEvent(
         ? item["html_link"]
         : undefined;
 
+  const meetLink =
+    typeof item["hangoutLink"] === "string"
+      ? item["hangoutLink"]
+      : typeof item["conferenceData"] === "object" && item["conferenceData"] !== null
+        ? typeof (item["conferenceData"] as Record<string, unknown>)["entryPoints"] === "string"
+          ? (item["conferenceData"] as Record<string, unknown>)["entryPoints"] as string
+          : undefined
+        : undefined;
+
   return {
     id: typeof item["id"] === "string" ? item["id"] : "",
     title:
@@ -161,6 +171,7 @@ function mapGoogleEvent(
     attendees,
     description: typeof item["description"] === "string" ? item["description"] : undefined,
     htmlLink,
+    meetLink,
     status: typeof item["status"] === "string" ? item["status"] : "confirmed",
   };
 }
@@ -347,6 +358,7 @@ export async function createMeeting(
     attendees: [] as string[],
     description: undefined as string | undefined,
     htmlLink: undefined as string | undefined,
+    meetLink: undefined as string | undefined,
     status: "confirmed",
   };
 
@@ -356,6 +368,7 @@ export async function createMeeting(
     attendees:
       mapped.attendees.length > 0 ? mapped.attendees : (input.attendees ?? []),
     description: mapped.description ?? input.description,
+    meetLink: mapped.meetLink,
   };
 }
 
@@ -376,10 +389,12 @@ export async function cancelMeeting(
 export async function updateBookingWithCalendarEvent(
   tenantId: string,
   bookingId: string,
-  eventId: string
+  eventId: string,
+  meetLink?: string,
 ): Promise<void> {
+  const url = meetLink || `https://calendar.google.com/calendar/event?eid=${eventId}`;
   await db
     .update(schema.bookings)
-    .set({ meetingUrl: `https://calendar.google.com/calendar/event?eid=${eventId}` })
+    .set({ meetingUrl: url })
     .where(and(eq(schema.bookings.id, bookingId), eq(schema.bookings.clientId, tenantId)));
 }

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processInboundGmail } from "@/backend/agents/inbound-handler";
+import { db } from "@/backend/db";
+import { handleGmailWebhook } from "@/backend/messaging/gmail";
+
+// ── Gmail Webhook ──
+// Handles both:
+// 1. Real Google PubSub push notifications (message.data with base64-encoded historyId)
+// 2. Legacy payloads (leadId, clientId, subject, body)
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -9,7 +15,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { leadId, clientId, subject, body: emailBody, timestamp } = body as {
+  // Detect PubSub format vs legacy
+  const payload = body as Record<string, unknown>;
+  const isPubSub =
+    payload.message && typeof payload.message === "object" &&
+    typeof (payload.message as Record<string, unknown>).data === "string";
+
+  const isDecodedMessage =
+    typeof payload.messageId === "string" ||
+    (typeof payload.from === "string" && typeof payload.body === "string");
+
+  if (isPubSub || isDecodedMessage) {
+    // Real Gmail webhook — full conversational AI pipeline
+    try {
+      const result = await handleGmailWebhook(db, body);
+      return NextResponse.json({ received: true, ...result });
+    } catch (err) {
+      console.error("[api/webhooks/gmail] webhook error:", err);
+      return NextResponse.json({ received: true });
+    }
+  }
+
+  // Legacy format: { leadId, clientId, subject, body, timestamp }
+  const { leadId, clientId, subject, body: emailBody, timestamp } = payload as {
     leadId?: string;
     clientId?: string;
     subject?: string;
@@ -31,6 +59,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { processInboundGmail } = await import("@/backend/agents/inbound-handler");
     const result = await processInboundGmail({
       leadId,
       clientId,
@@ -41,7 +70,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    console.error("[api/webhooks/gmail] error", err);
+    console.error("[api/webhooks/gmail] legacy error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

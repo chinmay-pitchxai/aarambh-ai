@@ -274,14 +274,34 @@ export default function ConnectionsPage() {
         return;
       }
       if (data.needsConfig) {
-        // No Composio auth config exists. For Google Calendar we can create
-        // it automatically — offer the one-click setup.
         if (integration === "google_calendar") {
-          setNeedsSetup((prev) => ({ ...prev, [integration]: true }));
-          setError("Google Calendar needs a one-time setup in Composio. Click “Set up Google Calendar” below to create it, then connect.");
-        } else {
-          setError(data.error || `No auth config found for "${integration}". Create one in the Composio dashboard first.`);
+          setSuccess("Creating Google Calendar auth config...");
+          try {
+            const setupRes = await fetch("/api/v1/calendar/auth-config", { method: "POST", credentials: "include" });
+            const setupData = await setupRes.json();
+            if (!setupRes.ok) {
+              setError(setupData.error || "Failed to set up Google Calendar");
+              return;
+            }
+            setSuccess("Auth config ready. Starting OAuth...");
+            const retryRes = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
+            const retryData = await retryRes.json();
+            if (retryRes.ok && retryData.needsAuth && retryData.authUrl) {
+              window.location.href = retryData.authUrl;
+              return;
+            }
+            if (retryRes.ok && retryData.alreadyConnected) {
+              setSuccess(`${integration} is already connected`);
+              setConnections(prev => ({ ...prev, [integration]: { connected: true, status: "active" } }));
+              return;
+            }
+            setError(retryData.error || "Failed to start OAuth after config creation");
+          } catch {
+            setError("Failed to create Google Calendar auth config");
+          }
+          return;
         }
+        setError(data.error || `No auth config found for "${integration}". Create one in the Composio dashboard first.`);
         return;
       }
       if (data.alreadyConnected) {
