@@ -3,6 +3,7 @@ import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { createNotificationForTenant, formatNotificationMessage } from "../services/notifications";
+import { saveLeadMemory } from "../services/lead-memory";
 
 // ── Outcome Router ──
 // Replaces the switch statement in pipeline.ts.
@@ -257,6 +258,25 @@ export async function routeOutcome(
         callId,
       }).catch(() => {});
 
+      const [callData] = await db
+        .select({ summary: schema.calls.summary, sentiment: schema.calls.sentiment, bant: schema.calls.bant, durationSec: schema.calls.durationSec })
+        .from(schema.calls)
+        .where(eq(schema.calls.id, callId))
+        .limit(1);
+
+      saveLeadMemory({
+        tenantId: clientId,
+        leadId,
+        callId,
+        summary: callData?.summary || `Interested in ${lead.company || "product"}`,
+        sentiment: callData?.sentiment || "positive",
+        bant: callData?.bant as Record<string, string> || undefined,
+        nextAction: "call_back_5min",
+        scheduledCallbackAt: new Date(Date.now() + 5 * 60 * 1000),
+        previousCallContext: { outcome, duration: callData?.durationSec, attemptNumber: currentAttempt },
+        tags: ["interested", callData?.sentiment || "positive"],
+      }).catch(() => {});
+
       return { nextAction: "wait_reply", nudgeSent: true, messagesSent };
     }
 
@@ -371,6 +391,24 @@ export async function routeOutcome(
         }),
         leadId,
         callId,
+      }).catch(() => {});
+
+      const [callDataBooked] = await db
+        .select({ summary: schema.calls.summary, sentiment: schema.calls.sentiment, bant: schema.calls.bant, durationSec: schema.calls.durationSec })
+        .from(schema.calls)
+        .where(eq(schema.calls.id, callId))
+        .limit(1);
+
+      saveLeadMemory({
+        tenantId: clientId,
+        leadId,
+        callId,
+        summary: callDataBooked?.summary || `Booked meeting with ${lead.company || "lead"}`,
+        sentiment: callDataBooked?.sentiment || "positive",
+        bant: callDataBooked?.bant as Record<string, string> || undefined,
+        nextAction: "send_proposal",
+        previousCallContext: { outcome, duration: callDataBooked?.durationSec, attemptNumber: currentAttempt },
+        tags: ["booked", callDataBooked?.sentiment || "positive"],
       }).catch(() => {});
 
       return { nextAction: "confirm_booking", nudgeSent: true, messagesSent: 1 };

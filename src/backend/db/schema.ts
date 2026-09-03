@@ -586,6 +586,7 @@ export const integrationCredentials = pgTable("integration_credentials", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (t) => [
   index("idx_creds_tenant").on(t.tenantId),
+  uniqueIndex("idx_creds_tenant_integration").on(t.tenantId, t.integration),
 ]);
 
 // ── Chat Messages (Dashboard Assistant) ──
@@ -620,6 +621,27 @@ export const notifications = pgTable("notifications", {
   index("idx_notif_tenant_user").on(t.tenantId, t.userId),
   index("idx_notif_unread").on(t.tenantId, t.userId, t.read),
   index("idx_notif_created").on(t.createdAt),
+]);
+
+// ── Lead Memory (conversation context for long-term calls) ──
+export const leadMemory = pgTable("lead_memory", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  leadId: text("lead_id").notNull(),
+  callId: text("call_id"),
+  summary: text("summary").notNull(),
+  sentiment: text("sentiment"),
+  bant: jsonb("bant"),
+  nextAction: text("next_action"),
+  scheduledCallbackAt: timestamp("scheduled_callback_at"),
+  previousCallContext: jsonb("previous_call_context"),
+  tags: jsonb("tags"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (t) => [
+  index("idx_lead_memory_tenant").on(t.tenantId),
+  index("idx_lead_memory_lead").on(t.leadId),
+  index("idx_lead_memory_callback").on(t.scheduledCallbackAt),
 ]);
 
 // ── Calendar: Meeting Reminders ──

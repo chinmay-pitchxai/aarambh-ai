@@ -21,8 +21,14 @@ export default function BusinessOnboardingModal({ onComplete, onDismiss }: { onC
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    setLoading(true);
     setError(null);
+    
+    if (!website.trim() && !mapLocation.trim()) {
+      setError("Please provide either a website URL or a location so we can research your business.");
+      return;
+    }
+    
+    setLoading(true);
     try {
       const response = await fetch("/api/onboarding", {
         method: "POST",

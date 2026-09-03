@@ -36,6 +36,13 @@ export default function ConnectionsPage() {
   const [tenantId, setTenantId] = useState<string>("demo");
   const [needsSetup, setNeedsSetup] = useState<Record<string, boolean>>({});
   const [vobizDetail, setVobizDetail] = useState<string | null>(null);
+  const [showVobizModal, setShowVobizModal] = useState(false);
+  const [vobizAuthId, setVobizAuthId] = useState("");
+  const [vobizAuthToken, setVobizAuthToken] = useState("");
+  const [vobizConnecting, setVobizConnecting] = useState(false);
+  const [vobizNumbers, setVobizNumbers] = useState<Array<{ id: string; e164: string; status: string; voiceEnabled: boolean }>>([]);
+  const [vobizSelectedNumber, setVobizSelectedNumber] = useState<string | null>(null);
+  const [vobizStep, setVobizStep] = useState<"credentials" | "numbers">("credentials");
 
   const fetchAllStatuses = useCallback(async (tid: string) => {
     try {
@@ -137,6 +144,93 @@ export default function ConnectionsPage() {
       setError("Network error — please try again");
     } finally {
       setConnecting(null);
+    }
+  }
+
+  function openVobizModal() {
+    setVobizAuthId("");
+    setVobizAuthToken("");
+    setVobizNumbers([]);
+    setVobizSelectedNumber(null);
+    setVobizStep("credentials");
+    setShowVobizModal(true);
+    setError(null);
+    setSuccess(null);
+  }
+
+  async function handleVobizConnect() {
+    if (!vobizAuthId.trim() || !vobizAuthToken.trim()) {
+      setError("Please enter both Auth ID and Auth Token");
+      return;
+    }
+    setVobizConnecting(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/v1/integrations/vobiz/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ authId: vobizAuthId.trim(), authToken: vobizAuthToken.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Connection failed");
+        return;
+      }
+      setSuccess("Credentials verified! Fetching numbers…");
+      const numRes = await fetch("/api/v1/integrations/vobiz/numbers", { credentials: "include" });
+      const numData = await numRes.json();
+      if (!numRes.ok) {
+        setError(numData.error || "Failed to fetch numbers");
+        return;
+      }
+      if (numData.numbers.length === 0) {
+        setSuccess("Connected! No numbers found on this account. Purchase a number from Vobiz to start calling.");
+        setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
+        setVobizDetail(data.balance ? `balance ${data.balance.amount} ${data.balance.currency}` : "connected");
+        setShowVobizModal(false);
+        return;
+      }
+      setVobizNumbers(numData.numbers);
+      if (numData.selectedNumber) {
+        setVobizSelectedNumber(numData.selectedNumber);
+        setSuccess(`Connected! Auto-selected number: ${numData.selectedNumber}`);
+        setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
+        setVobizDetail(data.balance ? `balance ${data.balance.amount} ${data.balance.currency} · number ${numData.selectedNumber}` : `connected · number ${numData.selectedNumber}`);
+        setShowVobizModal(false);
+        return;
+      }
+      setVobizStep("numbers");
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setVobizConnecting(false);
+    }
+  }
+
+  async function handleVobizSelectNumber(e164: string) {
+    setVobizConnecting(true);
+    try {
+      const res = await fetch("/api/v1/integrations/vobiz/numbers/select", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ numberE164: e164 }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to select number");
+        return;
+      }
+      setVobizSelectedNumber(e164);
+      setSuccess(`Number ${e164} selected!`);
+      setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
+      setVobizDetail(`connected · number ${e164}`);
+      setShowVobizModal(false);
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setVobizConnecting(false);
     }
   }
 
@@ -368,7 +462,11 @@ export default function ConnectionsPage() {
                 <button
                   onClick={() => {
                     if (app.id === "vobiz") {
-                      handleVobizCheck();
+                      if (isConnected) {
+                        handleVobizCheck();
+                      } else {
+                        openVobizModal();
+                      }
                     } else if (isConnected) {
                       handleDisconnect(app.id);
                     } else {
@@ -385,7 +483,7 @@ export default function ConnectionsPage() {
                     opacity: connecting === app.id ? 0.5 : 1,
                   }}
                 >
-                  {connecting === app.id ? "..." : app.id === "vobiz" ? "Check connection" : isConnected ? "Disconnect" : "Connect"}
+                  {connecting === app.id ? "..." : app.id === "vobiz" ? (isConnected ? "Check connection" : "Connect") : isConnected ? "Disconnect" : "Connect"}
                 </button>
               </div>
             );
@@ -407,6 +505,101 @@ export default function ConnectionsPage() {
         </div>
         <span style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.06em", textTransform: "uppercase", background: "var(--surface)", padding: "6px 12px", borderRadius: 20, border: "1px solid var(--border)" }}>One-click</span>
       </div>
+
+      {showVobizModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "rgba(24,27,25,0.58)", backdropFilter: "blur(8px)" }}>
+          <div role="dialog" aria-modal="true" aria-labelledby="vobiz-connect-title" style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflow: "auto", borderRadius: 22, background: "var(--surface)", border: "1px solid var(--border)", boxShadow: "0 28px 90px rgba(0,0,0,.28)" }}>
+            <div style={{ padding: "24px 28px 20px", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 20 }}>
+                <div>
+                  <div style={{ color: "var(--accent)", fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 8 }}>Phone Integration</div>
+                  <h2 id="vobiz-connect-title" style={{ margin: 0, fontSize: 22, fontWeight: 500, color: "var(--text)" }}>
+                    {vobizStep === "credentials" ? "Connect to Vobiz" : "Select a phone number"}
+                  </h2>
+                  <p style={{ margin: "8px 0 0", color: "var(--text-dim)", fontSize: 13, lineHeight: 1.6 }}>
+                    {vobizStep === "credentials"
+                      ? "Enter your Vobiz API credentials from console.vobiz.ai"
+                      : "Choose a number to use for outbound calls"}
+                  </p>
+                </div>
+                <button type="button" onClick={() => setShowVobizModal(false)} aria-label="Close" style={{ width: 34, height: 34, flex: "0 0 auto", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-dim)", cursor: "pointer" }}>×</button>
+              </div>
+            </div>
+
+            <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 18 }}>
+              {vobizStep === "credentials" ? (
+                <>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Auth ID</span>
+                    <input
+                      required
+                      value={vobizAuthId}
+                      onChange={(e) => setVobizAuthId(e.target.value)}
+                      placeholder="Your Vobiz Auth ID"
+                      autoFocus
+                      style={{ width: "100%", padding: "12px 14px", borderRadius: 10, fontSize: 14, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", outline: "none" }}
+                    />
+                  </label>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Auth Token</span>
+                    <input
+                      required
+                      type="password"
+                      value={vobizAuthToken}
+                      onChange={(e) => setVobizAuthToken(e.target.value)}
+                      placeholder="Your Vobiz Auth Token"
+                      style={{ width: "100%", padding: "12px 14px", borderRadius: 10, fontSize: 14, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", outline: "none" }}
+                    />
+                  </label>
+                  {vobizConnecting && <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--accent-soft)", color: "var(--accent)", fontSize: 12 }}>Verifying credentials and fetching numbers…</div>}
+                </>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {vobizNumbers.map((num) => (
+                    <button
+                      key={num.id}
+                      onClick={() => handleVobizSelectNumber(num.e164)}
+                      disabled={vobizConnecting}
+                      style={{
+                        width: "100%", padding: "14px 16px", borderRadius: 12, fontSize: 14, fontWeight: 500,
+                        cursor: "pointer", textAlign: "left",
+                        background: vobizSelectedNumber === num.e164 ? "var(--accent-soft)" : "var(--surface-2)",
+                        border: `1px solid ${vobizSelectedNumber === num.e164 ? "var(--accent)" : "var(--border)"}`,
+                        color: "var(--text)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ fontFamily: "monospace", fontSize: 15 }}>{num.e164}</span>
+                        <span style={{ fontSize: 11, color: num.voiceEnabled ? "var(--green)" : "var(--text-dim)" }}>
+                          {num.voiceEnabled ? "● Voice enabled" : "○ Voice disabled"}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding: "18px 28px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 12 }}>
+              <button type="button" onClick={() => setShowVobizModal(false)} disabled={vobizConnecting} style={{ border: 0, background: "transparent", color: "var(--text-dim)", fontSize: 12, cursor: vobizConnecting ? "default" : "pointer" }}>Cancel</button>
+              {vobizStep === "credentials" && (
+                <button
+                  type="button"
+                  onClick={handleVobizConnect}
+                  disabled={vobizConnecting || !vobizAuthId.trim() || !vobizAuthToken.trim()}
+                  style={{
+                    padding: "11px 22px", border: 0, borderRadius: 10, background: "var(--accent)", color: "#fff", fontSize: 13, fontWeight: 600,
+                    cursor: vobizConnecting ? "wait" : "pointer",
+                    opacity: vobizConnecting || !vobizAuthId.trim() || !vobizAuthToken.trim() ? 0.65 : 1,
+                  }}
+                >
+                  {vobizConnecting ? "Connecting…" : "Connect"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -82,6 +82,9 @@ export const rlsSql: string[] = [
   "ALTER TABLE phone_numbers ENABLE ROW LEVEL SECURITY;",
   "CREATE POLICY tenant_isolation ON phone_numbers USING (tenant_id = current_setting('app.tenant_id')::text);",
 
+  "ALTER TABLE lead_memory ENABLE ROW LEVEL SECURITY;",
+  "CREATE POLICY tenant_isolation ON lead_memory USING (tenant_id = current_setting('app.tenant_id')::text);",
+
   // ── tables without a direct tenant column (subquery through parent) ──
   "ALTER TABLE call_events ENABLE ROW LEVEL SECURITY;",
   "CREATE POLICY tenant_isolation ON call_events USING (call_id IN (SELECT id FROM calls WHERE client_id = current_setting('app.tenant_id')::text));",
