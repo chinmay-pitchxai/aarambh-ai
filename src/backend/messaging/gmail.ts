@@ -230,7 +230,7 @@ export async function handleGmailWebhook(
     return { processed: 0, duplicates: 0, skipped: 1 };
   }
 
-  // Persist the thread; the Gmail thread id keeps replies threaded together.
+  // Persist the inbound message; the Gmail thread id keeps replies threaded together.
   await db.insert(schema.messages).values({
     id: randomUUID(),
     leadId: resolved.leadId,
@@ -242,10 +242,36 @@ export async function handleGmailWebhook(
     sentAt: parsed.receivedAt ?? new Date(),
   });
 
-  await processInboundMessage(db, {
+  const result = await processInboundMessage(db, {
     channel: "gmail",
     message: { ...parsed, leadId: resolved.leadId, clientId: resolved.clientId, tenantId },
   });
+
+  // Send conversational reply if one was generated
+  if (result.reply && result.replySent && result.action !== "dnc" && result.action !== "interested" && parsed.from) {
+    const subject = parsed.subject
+      ? `Re: ${parsed.subject.replace(/^(Re:|Fwd:)\s*/i, "")}`
+      : "Re: Your message";
+
+    const sent = await sendRawGmail({
+      to: parsed.from,
+      subject,
+      htmlBody: `<p>${result.reply.replace(/\n/g, "<br>")}</p>`,
+      threadId: parsed.threadId,
+    });
+
+    if (sent) {
+      await db.insert(schema.messages).values({
+        id: randomUUID(),
+        leadId: resolved.leadId,
+        clientId: resolved.clientId,
+        channel: "gmail",
+        direction: "outbound",
+        body: result.reply,
+        gmailThreadId: sent.threadId,
+      });
+    }
+  }
 
   return { processed: 1, duplicates: 0, skipped: 0 };
 }

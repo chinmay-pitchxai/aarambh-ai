@@ -6,6 +6,7 @@ import { BookingConflictError } from "@/backend/calendar/service";
 import { requireAuth, requireRole } from "@/backend/auth/middleware";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@/backend/db";
+import { createNotificationForTenant, formatNotificationMessage } from "@/backend/services/notifications";
 
 // ── Meetings v1 API ──
 // GET  /api/v1/meetings            → list tenant's meetings
@@ -86,6 +87,17 @@ export async function POST(req: NextRequest) {
       .update(schema.clientLeads)
       .set({ status: "booked" })
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, auth.ctx.tenantId)));
+
+    createNotificationForTenant(db, {
+      tenantId: auth.ctx.tenantId,
+      type: "meeting_booked",
+      title: "Meeting Booked",
+      message: formatNotificationMessage("meeting_booked", {
+        meetingTime: start.toISOString(),
+      }),
+      leadId,
+      meetingId: booking.id,
+    }).catch(() => {});
 
     return NextResponse.json({ meeting: booking }, { status: 201 });
   } catch (err) {

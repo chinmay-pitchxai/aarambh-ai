@@ -46,6 +46,8 @@ export async function GET(req: NextRequest) {
       status: schema.clientLeads.status,
       reusedFrom: schema.clientLeads.reusedFrom,
       assignedAt: schema.clientLeads.assignedAt,
+      lastCallAt: schema.clientLeads.lastCallAt,
+      attemptCount: schema.clientLeads.attemptCount,
       firstName: schema.leads.firstName,
       lastName: schema.leads.lastName,
       email: schema.leads.email,

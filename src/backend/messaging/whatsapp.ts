@@ -101,6 +101,40 @@ export async function callWhatsAppApi(
   return data.messages?.[0]?.id ?? null;
 }
 
+/**
+ * Sends a free-form text message via WhatsApp (non-template).
+ * Only valid within 24h of the last user-initiated message.
+ */
+export async function callWhatsAppFreeForm(to: string, text: string): Promise<string | null> {
+  const phoneId = process.env.WHATSAPP_PHONE_ID;
+  const token = process.env.WHATSAPP_API_TOKEN;
+  if (!phoneId || !token) {
+    console.log(`[WA-STUB-FREE] To: ${to}, Text: ${text.slice(0, 50)}...`);
+    return `wa-stub-free-${randomUUID().slice(0, 8)}`;
+  }
+
+  const res = await fetch(`${WHATSAPP_API}/${phoneId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: { body: text },
+    }),
+  });
+
+  if (!res.ok) {
+    console.error(`[WA] free-form send failed: ${res.status} ${res.statusText}`);
+    return null;
+  }
+  const data = (await res.json()) as { messages?: Array<{ id?: string }> };
+  return data.messages?.[0]?.id ?? null;
+}
+
 // ── Inbound parsing ──
 
 interface WhatsAppWebhookBody {
@@ -232,7 +266,7 @@ export async function handleWhatsAppWebhook(
       continue;
     }
 
-    // Persist the thread on the shared messages table.
+    // Persist the inbound message on the shared messages table.
     await db.insert(schema.messages).values({
       id: randomUUID(),
       leadId: resolved.leadId,
@@ -244,10 +278,37 @@ export async function handleWhatsAppWebhook(
       sentAt: msg.receivedAt ?? new Date(),
     });
 
-    await processInboundMessage(db, {
+    // Save the inbound message to conversation history (already done above).
+
+    const result = await processInboundMessage(db, {
       channel: "whatsapp",
       message: { ...msg, leadId: resolved.leadId, clientId: resolved.clientId, tenantId },
     });
+
+    // Send conversational reply if one was generated and we're within session window
+    if (result.reply && result.replySent && result.action !== "dnc" && result.action !== "interested") {
+      const withinWindow = await isWithinSessionWindow(db, {
+        leadId: resolved.leadId,
+        clientId: resolved.clientId,
+      });
+
+      if (withinWindow) {
+        const replyText: string = result.reply ? result.reply : "I'll get back to you on that.";
+        const waReplyId = await callWhatsAppFreeForm(msg.from || "", replyText);
+        if (waReplyId) {
+          // Persist the outbound conversational reply
+          await db.insert(schema.messages).values({
+            id: randomUUID(),
+            leadId: resolved.leadId,
+            clientId: resolved.clientId,
+            channel: "whatsapp",
+            direction: "outbound",
+            body: result.reply,
+            waMessageId: waReplyId,
+          });
+        }
+      }
+    }
 
     processed++;
   }

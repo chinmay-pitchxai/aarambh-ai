@@ -54,6 +54,8 @@ When you need to call tools, respond with ONLY a JSON object in this exact forma
 When you have the data and want to respond to the user, respond normally with text.
 Do NOT include tool call JSON in your final text response.`;
 
+const MAX_TOOL_ROUNDS = 3;
+
 async function callGemini(
   messages: Array<{ role: string; parts: Array<{ text: string }> }>,
 ): Promise<string> {
@@ -71,7 +73,10 @@ async function callGemini(
     signal: AbortSignal.timeout(30000),
   });
 
-  if (!res.ok) throw new Error(`Gemini API ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => "");
+    throw new Error(`Gemini API ${res.status}: ${errBody}`);
+  }
   const data = await res.json();
   return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
 }
@@ -131,29 +136,49 @@ export async function askDashboardAssistant(
   // Add user message
   messages.push({ role: "user", parts: [{ text: message }] });
 
-  // Call LLM — may request tool calls
-  let llmResponse = await callGemini(messages);
-  const toolCalls = parseToolCalls(llmResponse);
+  // Tool loop with max rounds
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    let llmResponse: string;
+    try {
+      llmResponse = await callGemini(messages);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.error("[dashboard-assistant] Gemini call failed:", errMsg);
+      return {
+        response: `I ran into an issue connecting to the AI service. Please try again in a moment.\n\n(${errMsg})`,
+      };
+    }
 
-  // If tool calls detected, execute them and re-prompt
-  if (toolCalls && toolCalls.length > 0) {
+    if (!llmResponse.trim()) {
+      return { response: "I received an empty response. Please try again." };
+    }
+
+    const toolCalls = parseToolCalls(llmResponse);
+
+    // No tool calls — return the LLM's text response directly
+    if (!toolCalls || toolCalls.length === 0) {
+      return { response: llmResponse.trim() };
+    }
+
+    // Execute each tool call
     const toolResults: string[] = [];
+    const allData: Record<string, unknown> = {};
 
     for (const tc of toolCalls) {
       try {
         const result = await executeTool(tc.name, tc.args, tenantId);
-        toolResults.push(`Tool "${tc.name}" returned:\n${JSON.stringify(result, null, 2)}`);
+        toolResults.push(
+          `Tool "${tc.name}" returned:\n${JSON.stringify(result, null, 2)}`,
+        );
+        allData[tc.name] = result;
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);
         toolResults.push(`Tool "${tc.name}" failed: ${errMsg}`);
       }
     }
 
-    // Add tool results to conversation
-    messages.push({
-      role: "model",
-      parts: [{ text: llmResponse }],
-    });
+    // Add the model's tool-call message and a user message with results
+    messages.push({ role: "model", parts: [{ text: llmResponse }] });
     messages.push({
       role: "user",
       parts: [
@@ -162,36 +187,11 @@ export async function askDashboardAssistant(
         },
       ],
     });
-
-    llmResponse = await callGemini(messages);
-
-    // Second pass: check for additional tool calls
-    const secondToolCalls = parseToolCalls(llmResponse);
-    if (secondToolCalls && secondToolCalls.length > 0) {
-      const secondResults: string[] = [];
-      for (const tc of secondToolCalls) {
-        try {
-          const result = await executeTool(tc.name, tc.args, tenantId);
-          secondResults.push(`Tool "${tc.name}" returned:\n${JSON.stringify(result, null, 2)}`);
-        } catch (e) {
-          const errMsg = e instanceof Error ? e.message : String(e);
-          secondResults.push(`Tool "${tc.name}" failed: ${errMsg}`);
-        }
-      }
-      messages.push({ role: "model", parts: [{ text: llmResponse }] });
-      messages.push({
-        role: "user",
-        parts: [
-          {
-            text: `Additional tool results:\n\n${secondResults.join("\n\n")}\n\nNow provide your final answer.`,
-          },
-        ],
-      });
-      llmResponse = await callGemini(messages);
-    }
-
-    return { response: llmResponse.trim() };
   }
 
-  return { response: llmResponse.trim() };
+  // Fallback if tool loop exhausted
+  return {
+    response:
+      "I gathered some data but couldn't finalize a response. Could you try rephrasing your question?",
+  };
 }

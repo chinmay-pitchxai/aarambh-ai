@@ -6,7 +6,7 @@ export type Db = PostgresJsDatabase<typeof schema>;
 
 export type MessageChannel = "whatsapp" | "gmail";
 export type MessageDirection = "inbound" | "outbound";
-export type Intent = "interested" | "dnc" | "neutral";
+export type Intent = "interested" | "dnc" | "neutral" | "question";
 
 /** Normalized inbound message used across adapters and the inbound router. */
 export interface InboundMessage {
@@ -67,7 +67,9 @@ export type SendMessageInput = WhatsAppSendInput | GmailSendInput;
 
 export interface InboundProcessResult {
   intent: Intent;
-  action: "dnc" | "interested" | "neutral";
+  action: "dnc" | "interested" | "neutral" | "question";
   leadId: string;
   clientId: string;
+  reply?: string;
+  replySent?: boolean;
 }

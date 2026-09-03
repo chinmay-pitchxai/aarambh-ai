@@ -40,6 +40,31 @@ const INTEREST_KEYWORDS = [
   "what is the cost",
 ];
 
+const QUESTION_KEYWORDS = [
+  "what",
+  "how",
+  "when",
+  "where",
+  "why",
+  "which",
+  "who",
+  "can you",
+  "could you",
+  "tell me",
+  "explain",
+  "does it",
+  "do you",
+  "is there",
+  "are there",
+  "what's",
+  "what is",
+  "how much",
+  "how long",
+  "how does",
+  "what do",
+  "what kind",
+];
+
 export function detectIntent(body: string): Intent {
   const lower = body.toLowerCase().trim();
   if (!lower) return "neutral";
@@ -50,6 +75,9 @@ export function detectIntent(body: string): Intent {
   }
   for (const keyword of INTEREST_KEYWORDS) {
     if (lower.includes(keyword)) return "interested";
+  }
+  for (const keyword of QUESTION_KEYWORDS) {
+    if (lower.startsWith(keyword) || lower.includes(keyword + " ")) return "question";
   }
   return "neutral";
 }

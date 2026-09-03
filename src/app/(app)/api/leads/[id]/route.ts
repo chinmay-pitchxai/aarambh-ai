@@ -55,11 +55,30 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     .where(and(eq(schema.messages.leadId, leadId), eq(schema.messages.clientId, session.activeOrganizationId)))
     .orderBy(sql`${schema.messages.sentAt} DESC`);
 
+  // Bookings
+  const bookings = await db
+    .select()
+    .from(schema.bookings)
+    .where(and(eq(schema.bookings.leadId, leadId), eq(schema.bookings.clientId, session.activeOrganizationId)))
+    .orderBy(sql`${schema.bookings.scheduledAt} DESC`);
+
+  // Retry queue (next actions)
+  const retries = await db
+    .select()
+    .from(schema.retryQueue)
+    .where(and(eq(schema.retryQueue.leadId, leadId), eq(schema.retryQueue.clientId, session.activeOrganizationId), eq(schema.retryQueue.status, "pending")))
+    .orderBy(sql`${schema.retryQueue.nextAttemptAt} ASC`)
+    .limit(3);
+
   const leadWithState = {
     ...lead,
     score: clientLead.score ?? null,
     band: clientLead.band ?? null,
     status: clientLead.status ?? null,
+    lastCallAt: clientLead.lastCallAt ?? null,
+    attemptCount: clientLead.attemptCount ?? 0,
+    reusedFrom: clientLead.reusedFrom ?? null,
+    assignedAt: clientLead.assignedAt ?? null,
   };
   const insights = await generateLeadInsights({ lead: leadWithState, calls, messages });
 
@@ -67,6 +86,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     lead: leadWithState,
     calls,
     messages,
+    bookings,
+    retries,
     insights,
   });
 }

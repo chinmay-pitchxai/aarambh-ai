@@ -4,7 +4,7 @@ import { createRedisStore, type RedisStore } from "./context";
 import { routeOutcome, getRetryDelay } from "./outcome-router";
 
 // ── Pipeline Orchestrator ──
-// Per-lead: Consent → Dialer → Nudge (with retry/parked/booked/lost routing)
+// Per-lead: Consent → Dialer → Outcome Router → Nudge (with retry/parked/booked/lost routing)
 // Batch orchestration (Scout → Ranker) lives in /api/run
 // Error handling: failures go to DLQ, transient errors retry via queue
 // Max 3 attempts before marking lead as lost
@@ -122,8 +122,12 @@ export function createPipeline(config: PipelineConfig) {
       return { leadId, clientId, stage: "retry", outcome: dial.outcome, durationMs: Date.now() - t0 };
     }
 
-    // Handle nudge action
+    // Handle nudge action — skip if outcome router already sent messages
     if (nextAction === "wait_reply") {
+      if (routeResult.nudgeSent) {
+        return { leadId, clientId, stage: "nudge", outcome: "info_sent", durationMs: Date.now() - t0 };
+      }
+
       const nudgeResult = await runStage(
         config.agents.nudge,
         { leadId, clientId, callId: dial.callId, outcome: dial.outcome, bant: dial.bant },

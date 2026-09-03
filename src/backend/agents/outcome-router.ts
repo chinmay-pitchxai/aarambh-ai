@@ -2,6 +2,7 @@ import type { AgentContext, MessageBus } from "./types";
 import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { createNotificationForTenant, formatNotificationMessage } from "../services/notifications";
 
 // ── Outcome Router ──
 // Replaces the switch statement in pipeline.ts.
@@ -234,6 +235,18 @@ export async function routeOutcome(
 
       ctx.bus.publish({ type: "reply.interested", leadId, clientId });
 
+      createNotificationForTenant(db, {
+        tenantId: clientId,
+        type: "interested",
+        title: "Lead Interested",
+        message: formatNotificationMessage("interested", {
+          leadName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || undefined,
+          company: lead.company ?? undefined,
+        }),
+        leadId,
+        callId,
+      }).catch(() => {});
+
       return { nextAction: "wait_reply", nudgeSent: true, messagesSent };
     }
 
@@ -337,6 +350,18 @@ export async function routeOutcome(
         .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
 
       ctx.bus.publish({ type: "meeting.booked", leadId, clientId });
+
+      createNotificationForTenant(db, {
+        tenantId: clientId,
+        type: "meeting_booked",
+        title: "Meeting Booked",
+        message: formatNotificationMessage("meeting_booked", {
+          leadName: [lead.firstName, lead.lastName].filter(Boolean).join(" ") || undefined,
+          company: lead.company ?? undefined,
+        }),
+        leadId,
+        callId,
+      }).catch(() => {});
 
       return { nextAction: "confirm_booking", nudgeSent: true, messagesSent: 1 };
     }

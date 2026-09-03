@@ -2,6 +2,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import * as schema from "../db/schema";
 import { detectIntent } from "./intent";
+import { generateReply } from "./conversational-ai";
+import { saveConversationTurn } from "./conversation-memory";
 import type { Db, InboundMessage, InboundProcessResult, MessageChannel } from "./types";
 
 export interface ProcessInboundInput {
@@ -47,6 +49,40 @@ export async function processInboundMessage(
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
     await enqueueBookingJob(db, { leadId, clientId, tenantId: message.tenantId ?? clientId });
     return { intent, action: "interested", leadId, clientId };
+  }
+
+  // For neutral and question intents, generate a conversational reply
+  if (intent === "neutral" || intent === "question") {
+    try {
+      const replyResult = await generateReply(db, {
+        tenantId: message.tenantId ?? clientId,
+        leadId,
+        clientId,
+        channel,
+        incomingMessage: message.body,
+      });
+
+      // Save the outbound reply to conversation history
+      await saveConversationTurn(db, {
+        leadId,
+        clientId,
+        channel,
+        direction: "outbound",
+        body: replyResult.reply,
+      });
+
+      return {
+        intent,
+        action: intent,
+        leadId,
+        clientId,
+        reply: replyResult.reply,
+        replySent: true,
+      };
+    } catch (err) {
+      console.error(`[inbound] conversational reply failed for lead ${leadId}:`, err);
+      return { intent, action: intent, leadId, clientId, replySent: false };
+    }
   }
 
   return { intent, action: "neutral", leadId, clientId };

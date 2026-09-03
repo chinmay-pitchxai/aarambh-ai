@@ -24,6 +24,9 @@ const configSchema = z.object({
   LLM_RETRIES: z.preprocess((v) => (typeof v === "string" && v.trim() ? Number(v) : v), z.number().int().min(0).max(10).optional()),
   LLM_TIMEOUT_MS: z.preprocess((v) => (typeof v === "string" && v.trim() ? Number(v) : v), z.number().int().min(1000).max(120000).optional()),
   LLM_RATE_LIMIT_DELAY_MS: z.preprocess((v) => (typeof v === "string" && v.trim() ? Number(v) : v), z.number().int().min(100).max(60000).optional()),
+  VOICE_MODEL: optional,
+  VOICE_NAME: optional,
+  VOICE_LANGUAGE: optional,
 }).superRefine((environment, context) => {
   if (environment.NODE_ENV !== "production") return;
   const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
@@ -67,6 +70,11 @@ export function parseServerConfig(input: Record<string, string | undefined>) {
       apiKey: environment.VOBIZ_API_KEY,
       fromNumber: environment.VOBIZ_FROM_NUMBER,
       webhookSecret: environment.VOBIZ_WEBHOOK_SECRET,
+    }),
+    voice: Object.freeze({
+      model: environment.VOICE_MODEL || "gemini-3.1-flash-live-preview",
+      name: environment.VOICE_NAME || "Kore",
+      language: environment.VOICE_LANGUAGE || "en-IN",
     }),
     webhooks: Object.freeze({
       vobizSecret: environment.VOBIZ_WEBHOOK_SECRET,

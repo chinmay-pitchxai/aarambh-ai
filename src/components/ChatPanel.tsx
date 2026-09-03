@@ -1,12 +1,17 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }
 
 export function ChatPanel() {
@@ -30,9 +35,16 @@ export function ChatPanel() {
     }
   }, [open, historyLoaded]);
 
+  const scrollToBottom = useCallback(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, []);
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages]);
+    scrollToBottom();
+  }, [messages, loading, scrollToBottom]);
 
   useEffect(() => {
     if (open) inputRef.current?.focus();
@@ -72,7 +84,8 @@ export function ChatPanel() {
       const errorMsg: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+        content:
+          e instanceof Error ? e.message : "Something went wrong. Please try again.",
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errorMsg]);
@@ -205,15 +218,21 @@ export function ChatPanel() {
                 key={msg.id}
                 style={{
                   display: "flex",
-                  justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+                  flexDirection: "column",
+                  alignItems: msg.role === "user" ? "flex-end" : "flex-start",
+                  gap: 4,
                 }}
               >
                 <div
                   style={{
                     maxWidth: "80%",
                     padding: "10px 14px",
-                    borderRadius: msg.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
-                    background: msg.role === "user" ? "var(--accent)" : "var(--surface-2)",
+                    borderRadius:
+                      msg.role === "user"
+                        ? "12px 12px 4px 12px"
+                        : "12px 12px 12px 4px",
+                    background:
+                      msg.role === "user" ? "var(--accent)" : "var(--surface-2)",
                     color: msg.role === "user" ? "#fff" : "var(--text)",
                     fontSize: 13,
                     lineHeight: 1.5,
@@ -223,10 +242,27 @@ export function ChatPanel() {
                 >
                   {msg.content}
                 </div>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color: "var(--text-light)",
+                    padding: "0 4px",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  {formatTime(msg.createdAt)}
+                </span>
               </div>
             ))}
             {loading && (
-              <div style={{ display: "flex", justifyContent: "flex-start" }}>
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 4,
+                }}
+              >
                 <div
                   style={{
                     padding: "10px 14px",
@@ -234,8 +270,21 @@ export function ChatPanel() {
                     background: "var(--surface-2)",
                     color: "var(--text-dim)",
                     fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
                   }}
                 >
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: 6,
+                      height: 6,
+                      borderRadius: 3,
+                      background: "var(--accent)",
+                      animation: "pulse 1s infinite",
+                    }}
+                  />
                   Thinking&hellip;
                 </div>
               </div>
@@ -278,11 +327,14 @@ export function ChatPanel() {
                 padding: "10px 16px",
                 borderRadius: 10,
                 border: "none",
-                background: loading || !input.trim() ? "var(--surface-2)" : "var(--accent)",
-                color: loading || !input.trim() ? "var(--text-dim)" : "#fff",
+                background:
+                  loading || !input.trim() ? "var(--surface-2)" : "var(--accent)",
+                color:
+                  loading || !input.trim() ? "var(--text-dim)" : "#fff",
                 fontSize: 13,
                 fontWeight: 600,
-                cursor: loading || !input.trim() ? "default" : "pointer",
+                cursor:
+                  loading || !input.trim() ? "default" : "pointer",
                 letterSpacing: "0.02em",
               }}
             >

@@ -600,6 +600,26 @@ export const chatMessages = pgTable("chat_messages", {
   index("idx_chat_user").on(t.userId),
 ]);
 
+// ── Notifications ──
+export const notifications = pgTable("notifications", {
+  id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
+  tenantId: text("tenant_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull(),
+  type: text("type").notNull(), // "hot_lead" | "qualified_lead" | "interested" | "meeting_booked" | "call_completed" | "follow_up" | "dnc" | "system"
+  title: text("title").notNull(),
+  message: text("message"),
+  leadId: text("lead_id"),
+  callId: text("call_id"),
+  meetingId: text("meeting_id"),
+  read: boolean("read").default(false),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (t) => [
+  index("idx_notif_tenant_user").on(t.tenantId, t.userId),
+  index("idx_notif_unread").on(t.tenantId, t.userId, t.read),
+  index("idx_notif_created").on(t.createdAt),
+]);
+
 // ── Calendar: Meeting Reminders ──
 export const meetingReminders = pgTable("meeting_reminders", {
   id: text("id").$defaultFn(() => crypto.randomUUID()).primaryKey(),
