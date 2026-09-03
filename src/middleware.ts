@@ -7,7 +7,7 @@ const authRoutes = ["/auth/login", "/auth/signup"];
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const session = request.cookies.get("session")?.value;
-  const isAuthenticated = !!session;
+  const isAuthenticated = !!session && session.length > 10;
 
   if (protectedRoutes.some((route) => pathname.startsWith(route))) {
     if (!isAuthenticated) {

@@ -166,9 +166,9 @@ export default function DashboardPage() {
   useEffect(() => {
     const ctrl = new AbortController();
     setError(null);
-    fetch("/api/stats", { signal: ctrl.signal })
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(setStats)
+    fetch("/api/stats", { signal: ctrl.signal, credentials: "include" })
+      .then((r) => { if (r.status === 401) { window.location.href = "/auth/login?from=/dashboard"; return null; } if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (data) setStats(data); })
       .catch((e) => { if (e.name !== "AbortError") setError(e.message || "Failed to load stats"); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
@@ -176,9 +176,9 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetch("/api/stats/history?days=30", { signal: ctrl.signal })
-      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(setHistory)
+    fetch("/api/stats/history?days=30", { signal: ctrl.signal, credentials: "include" })
+      .then((r) => { if (r.status === 401) return null; if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (data) setHistory(data); })
       .catch(() => {});
     return () => ctrl.abort();
   }, []);
