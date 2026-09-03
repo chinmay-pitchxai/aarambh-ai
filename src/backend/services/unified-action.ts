@@ -6,8 +6,6 @@ import { researchCompany } from "./company-research";
 import { generateICP, toIcpProfile } from "./icp-generation";
 import { searchApolloProspects, type IcpProfile } from "./apollo";
 
-const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
-
 // ── Unified Action Service ──
 // Routes chat actions to the right backend and returns structured results
 
@@ -191,51 +189,39 @@ export async function callLeadAction(
     if (!lead) return { success: false, action: "callLead", summary: "Lead not found", error: "Lead not found" };
     if (!lead.phoneE164) return { success: false, action: "callLead", summary: "No phone number", error: "No phone number available" };
 
-    // Initiate call via Vobiz
-    const apiKey = process.env.VOBIZ_API_KEY;
+    // Initiate a REAL call via the Vobiz adapter. The terminal outcome
+    // arrives via the provider status/hangup callback — never fabricated here.
+    const { requireVobizConfig } = await import("../config");
+    const { getVobizClient } = await import("../integrations/vobiz");
+    const { fromNumber } = requireVobizConfig();
+    const answerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/vobiz`;
+
     let vobizCallId: string;
     let status: string;
-
-    if (!apiKey) {
-      vobizCallId = `dev-${randomUUID().slice(0, 8)}`;
-      status = "connected";
-    } else {
-      const res = await fetch(`${VOBIZ_API}/calls`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          to: lead.phoneE164,
-          from: process.env.VOBIZ_FROM_NUMBER,
-          webhook: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
-          record: true,
-        }),
+    try {
+      const result = await getVobizClient().initiateCall(fromNumber, lead.phoneE164, answerUrl, {
+        timeout: 30,
+        callbackUrl: answerUrl,
       });
-
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => "");
-        return { success: false, action: "callLead", summary: "Call failed", error: `Vobiz error: ${res.status} ${errBody}` };
-      }
-
-      const data = await res.json();
-      vobizCallId = data.call_id;
-      status = data.status;
+      vobizCallId = result.callId;
+      status = result.status;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, action: "callLead", summary: "Call initiation failed", error: msg };
     }
 
-    // Store call record
+    // Store pending call record (outcome filled in by webhook flow)
     const callId = randomUUID();
     await db.insert(schema.calls).values({
       id: callId,
       leadId,
       clientId: tenantId,
       vobizCallId,
-      outcome: "no_answer",
-      durationSec: 0,
+      outcome: null,
+      durationSec: null,
       pitchUsed: "Manual call from dashboard",
+      summary: `Manual call submitted (provider uuid ${vobizCallId}). Awaiting provider outcome via webhook.`,
       startedAt: new Date(),
-      endedAt: new Date(),
     });
 
     // Update lead status

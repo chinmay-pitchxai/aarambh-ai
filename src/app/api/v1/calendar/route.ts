@@ -7,6 +7,16 @@ import {
   type CreateEventInput,
 } from "@/backend/services/calendar-composio";
 
+function toCalendarErrorResponse(err: unknown) {
+  const message = err instanceof Error ? err.message : "Internal server error";
+  // Missing/expired connection is actionable client-side (reconnect flow),
+  // not a server fault.
+  if (/not connected/i.test(message)) {
+    return NextResponse.json({ error: message, action: "connect" }, { status: 409 });
+  }
+  return NextResponse.json({ error: message }, { status: 500 });
+}
+
 // GET /api/v1/calendar — list upcoming meetings from Google Calendar
 export async function GET(req: NextRequest) {
   const auth = await requireAuth();
@@ -17,8 +27,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ meetings });
   } catch (err) {
     console.error("[api/v1/calendar] GET error", err);
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return toCalendarErrorResponse(err);
   }
 }
 
@@ -67,8 +76,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ event }, { status: 201 });
   } catch (err) {
     console.error("[api/v1/calendar] POST error", err);
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return toCalendarErrorResponse(err);
   }
 }
 
@@ -89,7 +97,6 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json(result);
   } catch (err) {
     console.error("[api/v1/calendar] DELETE error", err);
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return toCalendarErrorResponse(err);
   }
 }

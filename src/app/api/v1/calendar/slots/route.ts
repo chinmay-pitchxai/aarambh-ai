@@ -35,6 +35,9 @@ export async function GET(req: NextRequest) {
   } catch (err) {
     console.error("[api/v1/calendar/slots] GET error", err);
     const message = err instanceof Error ? err.message : "Internal server error";
+    if (/not connected/i.test(message)) {
+      return NextResponse.json({ error: message, action: "connect" }, { status: 409 });
+    }
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

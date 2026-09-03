@@ -44,8 +44,21 @@ export async function POST(request: Request) {
     }
   }
 
-  const eventType = payload.event_type || "unknown";
-  const rawCallId = payload.call_id || payload.callId || payload.CallUUID || payload.vobiz_call_id;
+  const eventType =
+    (payload.event_type as string) ||
+    (payload.CallStatus as string) ||
+    (payload.call_status as string) ||
+    "unknown";
+  // Vobiz posts call UUIDs under several names depending on callback type
+  // (answer_url, hangup_url / status_callback).
+  const rawCallId =
+    payload.call_id ||
+    payload.callId ||
+    payload.CallUUID ||
+    payload.CallUuid ||
+    payload.call_uuid ||
+    payload.request_uuid ||
+    payload.vobiz_call_id;
   const idempotencyKey = payload.idempotency_key as string | undefined;
 
   if (idempotencyKey) {

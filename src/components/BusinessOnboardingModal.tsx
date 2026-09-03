@@ -6,11 +6,13 @@ interface OnboardingResult {
   business: { companyName: string; industry: string; description: string; location: string };
   icp: { personTitles: string[]; employeeRanges: string[]; locations: string[] };
   leadsImported: number;
+  callsQueued?: number;
   warning?: string | null;
 }
 
 export default function BusinessOnboardingModal({ onComplete, onDismiss }: { onComplete: () => Promise<void>; onDismiss: () => void }) {
   const [companyName, setCompanyName] = useState("");
+  const [businessType, setBusinessType] = useState("");
   const [website, setWebsite] = useState("");
   const [mapLocation, setMapLocation] = useState("");
   const [loading, setLoading] = useState(false);
@@ -25,7 +27,7 @@ export default function BusinessOnboardingModal({ onComplete, onDismiss }: { onC
       const response = await fetch("/api/onboarding", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyName, website, mapLocation }),
+        body: JSON.stringify({ companyName, businessType, website, mapLocation }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "We could not research this business");
@@ -70,10 +72,11 @@ export default function BusinessOnboardingModal({ onComplete, onDismiss }: { onC
                 <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: ".1em" }}>Target leads added</div>
               </div>
               <div style={{ padding: 16, borderRadius: 12, background: "var(--surface-2)" }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 6 }}>Ideal buyers</div>
-                <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5 }}>{result.icp.personTitles.slice(0, 3).join(" · ")}</div>
+                <div style={{ fontSize: 26, fontWeight: 400, color: "var(--text)" }}>{result.callsQueued ?? 0}</div>
+                <div style={{ fontSize: 10, color: "var(--text-dim)", textTransform: "uppercase", letterSpacing: ".1em" }}>Calls queued</div>
               </div>
             </div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)", lineHeight: 1.5, margin: "-8px 0 18px" }}>Ideal buyers: {result.icp.personTitles.slice(0, 3).join(" · ")}</div>
             {result.warning && <div style={{ fontSize: 12, lineHeight: 1.5, color: "#8a641f", background: "rgba(212,184,122,.18)", padding: "10px 12px", borderRadius: 9, marginBottom: 18 }}>Company research finished, but lead import needs attention: {result.warning}</div>}
             <button onClick={() => { window.location.href = "/leads"; }} style={{ width: "100%", padding: "12px 18px", border: 0, borderRadius: 10, background: "var(--accent)", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>View target leads →</button>
           </div>
@@ -85,13 +88,17 @@ export default function BusinessOnboardingModal({ onComplete, onDismiss }: { onC
                 <input required minLength={2} value={companyName} onChange={(event) => setCompanyName(event.target.value)} placeholder="e.g. AarambhAI" autoFocus style={inputStyle} />
               </label>
               <label style={{ display: "block" }}>
-                <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Website URL</span>
-                <input required value={website} onChange={(event) => setWebsite(event.target.value)} placeholder="https://yourcompany.com" inputMode="url" style={inputStyle} />
+                <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Business type</span>
+                <input required minLength={2} value={businessType} onChange={(event) => setBusinessType(event.target.value)} placeholder="e.g. B2B SaaS, real estate, healthcare" style={inputStyle} />
               </label>
               <label style={{ display: "block" }}>
-                <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Google Maps location</span>
-                <input required value={mapLocation} onChange={(event) => setMapLocation(event.target.value)} placeholder="Bengaluru, Karnataka or paste a Google Maps link" style={inputStyle} />
-                <span style={{ display: "block", fontSize: 11, color: "var(--text-light)", marginTop: 6 }}>Used to target companies in the markets you serve.</span>
+                <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Website URL <span style={{ fontWeight: 400, textTransform: "none" }}>(optional)</span></span>
+                <input value={website} onChange={(event) => setWebsite(event.target.value)} placeholder="https://yourcompany.com" inputMode="url" style={inputStyle} />
+              </label>
+              <label style={{ display: "block" }}>
+                <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Google Maps location <span style={{ fontWeight: 400, textTransform: "none" }}>(optional)</span></span>
+                <input value={mapLocation} onChange={(event) => setMapLocation(event.target.value)} placeholder="Bengaluru, Karnataka or paste a Google Maps link" style={inputStyle} />
+                <span style={{ display: "block", fontSize: 11, color: "var(--text-light)", marginTop: 6 }}>Enter at least a website or a location. We use the information provided to research your market and find buyers in Apollo.</span>
               </label>
               {loading && <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--accent-soft)", color: "var(--accent)", fontSize: 12 }}>Researching website and company → Building ICP → Finding Apollo prospects…</div>}
               {error && <div role="alert" style={{ padding: "10px 12px", borderRadius: 9, background: "var(--terracotta-soft)", color: "var(--terracotta)", fontSize: 12, lineHeight: 1.5 }}>{error}</div>}

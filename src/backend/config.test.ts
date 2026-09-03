@@ -13,7 +13,7 @@ describe("parseServerConfig", () => {
     const config = parseServerConfig(validEnvironment);
 
     expect(config.appUrl).toBe("http://localhost:3000");
-    expect(config.vobiz.apiUrl).toBe("https://api.vobiz.in/v1");
+    expect(config.vobiz.apiUrl).toBe("https://api.vobiz.ai");
     expect(config.allowInMemoryFallback).toBe(true);
     expect(config.isProduction).toBe(false);
   });
@@ -31,7 +31,7 @@ describe("parseServerConfig", () => {
       ...validEnvironment,
       NODE_ENV: "production",
       ALLOW_IN_MEMORY_FALLBACK: "true",
-    })).toThrow(/APP_SECRET.*VOBIZ_API_KEY.*VOBIZ_FROM_NUMBER.*VOBIZ_WEBHOOK_SECRET.*ALLOW_IN_MEMORY_FALLBACK/);
+    })).toThrow(/APP_SECRET.*VOBIZ_AUTH_ID.*VOBIZ_AUTH_TOKEN.*VOBIZ_FROM_NUMBER.*VOBIZ_WEBHOOK_SECRET.*ALLOW_IN_MEMORY_FALLBACK/);
   });
 
   it("accepts a fully configured production environment", () => {
@@ -39,7 +39,8 @@ describe("parseServerConfig", () => {
       ...validEnvironment,
       NODE_ENV: "production",
       APP_SECRET: "a-secure-production-secret-with-more-than-32-characters",
-      VOBIZ_API_KEY: "provider-key",
+      VOBIZ_AUTH_ID: "MA_TEST123",
+      VOBIZ_AUTH_TOKEN: "provider-token",
       VOBIZ_FROM_NUMBER: "+919999999999",
       VOBIZ_WEBHOOK_SECRET: "webhook-secret",
       ALLOW_IN_MEMORY_FALLBACK: "false",

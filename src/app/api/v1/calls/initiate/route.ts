@@ -64,14 +64,14 @@ export async function POST(req: NextRequest) {
     .where(
       and(
         eq(schema.phoneNumbers.tenantId, auth.ctx.tenantId),
-        eq(schema.phoneNumbers.status, "available"),
+        eq(schema.phoneNumbers.status, "assigned"),
       ),
     )
     .limit(1);
 
   if (!phoneNumber) {
     return NextResponse.json(
-      { error: "No phone number provisioned for this tenant. Provision one first." },
+      { error: "No phone number is assigned to this tenant. Connect Vobiz and provision one first." },
       { status: 400 },
     );
   }

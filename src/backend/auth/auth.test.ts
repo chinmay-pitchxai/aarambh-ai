@@ -23,7 +23,7 @@ describe("password hashing", () => {
 });
 
 describe("sessions", () => {
-  it("creates a session, persists it and sets an httpOnly cookie", async () => {
+  it("creates a session and persists it (cookie is set by the route handler)", async () => {
     mockDb.query.organizationMembers.findFirst.mockResolvedValue({ organizationId: "org-1" });
     mockInsertResolving();
 
@@ -32,11 +32,8 @@ describe("sessions", () => {
     expect(sessionId).toBeTruthy();
     expect(mockDb.query.organizationMembers.findFirst).toHaveBeenCalled();
     expect(mockDb.insert).toHaveBeenCalled();
-    expect(mockCookieStore.set).toHaveBeenCalledWith(
-      "session",
-      sessionId,
-      expect.objectContaining({ httpOnly: true, sameSite: "lax" }),
-    );
+    // NOTE: createSession no longer touches cookies — the login/signup route
+    // handlers set the session cookie on the response object.
   });
 
   it("validates an active session", async () => {

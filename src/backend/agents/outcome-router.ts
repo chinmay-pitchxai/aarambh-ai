@@ -9,6 +9,7 @@ import { createNotificationForTenant, formatNotificationMessage } from "../servi
 // Handles every possible call outcome and routes to the correct next step.
 
 export type CallOutcome =
+  | "initiated"
   | "interested"
   | "not_interested"
   | "no_answer"
@@ -224,6 +225,15 @@ export async function routeOutcome(
   const currentAttempt = (cl?.attemptCount ?? 0) + 1;
 
   switch (outcome) {
+    // ── 0. INITIATED (call submitted, provider outcome pending) ──
+    // The real outcome arrives asynchronously via the Vobiz status/hangup
+    // callback, which re-enters this router with the terminal outcome.
+    // Do nothing here — never fabricate an outcome, never mark lost.
+    case "initiated": {
+      ctx.log("outcome-router: call in flight, awaiting provider callback", { leadId, callId });
+      return { nextAction: "wait_reply", nudgeSent: true };
+    }
+
     // ── 1. INTERESTED ──
     case "interested": {
       const messagesSent = await sendInfo(leadId, clientId, callId, lead, ctx);

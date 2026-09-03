@@ -11,8 +11,9 @@ const configSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url(),
   GEMINI_API_KEY: optional,
   APP_SECRET: optional,
-  VOBIZ_API_URL: z.string().url().default("https://api.vobiz.in/v1"),
-  VOBIZ_API_KEY: optional,
+  VOBIZ_API_URL: z.string().url().default("https://api.vobiz.ai"),
+  VOBIZ_AUTH_ID: optional,
+  VOBIZ_AUTH_TOKEN: optional,
   VOBIZ_FROM_NUMBER: optional,
   VOBIZ_WEBHOOK_SECRET: optional,
   WHATSAPP_WEBHOOK_SECRET: optional,
@@ -35,7 +36,7 @@ const configSchema = z.object({
   if (environment.NODE_ENV !== "production") return;
   const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
   if (isBuildPhase) return;
-  for (const name of ["APP_SECRET", "VOBIZ_API_KEY", "VOBIZ_FROM_NUMBER", "VOBIZ_WEBHOOK_SECRET"] as const) {
+  for (const name of ["APP_SECRET", "VOBIZ_AUTH_ID", "VOBIZ_AUTH_TOKEN", "VOBIZ_FROM_NUMBER", "VOBIZ_WEBHOOK_SECRET"] as const) {
     if (!environment[name]) context.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: "is required in production" });
   }
   if (environment.APP_SECRET === "aarambhai-dev-secret-change-in-production" || environment.APP_SECRET?.startsWith("change-this")) {
@@ -71,7 +72,8 @@ export function parseServerConfig(input: Record<string, string | undefined>) {
     }),
     vobiz: Object.freeze({
       apiUrl: environment.VOBIZ_API_URL.replace(/\/$/, ""),
-      apiKey: environment.VOBIZ_API_KEY,
+      authId: environment.VOBIZ_AUTH_ID,
+      authToken: environment.VOBIZ_AUTH_TOKEN,
       fromNumber: environment.VOBIZ_FROM_NUMBER,
       webhookSecret: environment.VOBIZ_WEBHOOK_SECRET,
     }),

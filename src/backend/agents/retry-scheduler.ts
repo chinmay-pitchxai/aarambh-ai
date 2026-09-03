@@ -96,6 +96,18 @@ export async function processRetries(bus: MessageBus): Promise<{
 
       // Handle outcomes
       switch (dialResult.outcome) {
+        case "initiated": {
+          // Real call was submitted to the provider; the final outcome will
+          // arrive via webhook. Consume this attempt (no duplicate dial).
+          await db
+            .update(schema.retryQueue)
+            .set({ status: "completed" })
+            .where(eq(schema.retryQueue.id, retry.id));
+
+          completed++;
+          break;
+        }
+
         case "interested":
         case "booked": {
           // Update retryQueue status to 'completed'

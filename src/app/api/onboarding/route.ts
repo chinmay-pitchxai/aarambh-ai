@@ -7,11 +7,18 @@ import { db, schema } from "@/backend/db";
 import { researchBusiness } from "@/backend/services/business-research";
 import { searchApolloProspects, type ApolloProspect, type IcpProfile } from "@/backend/services/apollo";
 import { autoSetupAfterOnboarding } from "@/backend/services/auto-setup";
+import Redis from "ioredis";
+import { createDurableQueue } from "@/backend/queue/durable-queue";
+import { initiateCall } from "@/backend/telephony/call-engine";
 
 const onboardingInput = z.object({
   companyName: z.string().trim().min(2, "Business name is required").max(160),
-  website: z.string().trim().min(3, "Website URL is required").max(500),
-  mapLocation: z.string().trim().min(2, "Google Maps location is required").max(1000),
+  businessType: z.string().trim().min(2, "Business type is required").max(160),
+  website: z.string().trim().max(500).optional().default(""),
+  mapLocation: z.string().trim().max(1000).optional().default(""),
+}).refine((value) => value.website.length > 0 || value.mapLocation.length > 0, {
+  message: "Add a website or a location so we can research your business.",
+  path: ["website"],
 });
 
 function prospectScore(prospect: ApolloProspect, icp: IcpProfile) {
@@ -57,6 +64,36 @@ async function saveProspect(tx: Parameters<Parameters<typeof db.transaction>[0]>
     status: "new",
   }).onConflictDoNothing({ target: [schema.clientLeads.clientId, schema.clientLeads.leadId] });
   return leadId;
+}
+
+async function queueInitialCalls(organizationId: string, leadIds: string[]): Promise<{ queued: number; warning: string | null }> {
+  if (leadIds.length === 0) return { queued: 0, warning: null };
+  if (!process.env.VOBIZ_AUTH_ID || !process.env.VOBIZ_FROM_NUMBER) {
+    return { queued: 0, warning: "Leads were saved, but calls are waiting for Vobiz to be connected." };
+  }
+
+  const [number] = await db
+    .select({ numberE164: schema.phoneNumbers.numberE164 })
+    .from(schema.phoneNumbers)
+    .where(and(eq(schema.phoneNumbers.tenantId, organizationId), eq(schema.phoneNumbers.status, "assigned")))
+    .limit(1);
+  if (!number) return { queued: 0, warning: "Leads were saved, but no Vobiz number is assigned to this workspace yet." };
+
+  const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", { lazyConnect: true, connectTimeout: 2_000, maxRetriesPerRequest: 1 });
+  try {
+    const queue = createDurableQueue(redis, "call-init");
+    let queued = 0;
+    for (const leadId of leadIds) {
+      const result = await initiateCall(db, queue, { tenantId: organizationId, leadId, fromNumber: number.numberE164 });
+      if (result.success) queued++;
+    }
+    return { queued, warning: queued === 0 ? "Leads were saved; calls will start during the permitted calling window when phone-ready prospects are available." : null };
+  } catch (error) {
+    console.error("[onboarding] call queue failed", error);
+    return { queued: 0, warning: "Leads were saved, but the call queue is temporarily unavailable." };
+  } finally {
+    redis.disconnect();
+  }
 }
 
 export async function POST(request: Request) {
@@ -116,6 +153,8 @@ export async function POST(request: Request) {
       return ids;
     });
 
+    const callLaunch = await queueInitialCalls(session.activeOrganizationId, importedLeadIds);
+
     // Auto-setup: generate sales prompts + build RAG after onboarding
     let autoSetupResult = null;
     try {
@@ -141,7 +180,8 @@ export async function POST(request: Request) {
         promptsGenerated: autoSetupResult.promptsGenerated,
         icpGenerated: autoSetupResult.icpGenerated,
       } : null,
-      warning: leadDiscoveryWarning,
+      callsQueued: callLaunch.queued,
+      warning: [leadDiscoveryWarning, callLaunch.warning].filter(Boolean).join(" ") || null,
     });
   } catch (error) {
     console.error("[onboarding]", error);

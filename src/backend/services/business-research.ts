@@ -67,7 +67,7 @@ async function readWebsiteMetadata(website: string): Promise<Record<string, stri
   }
 }
 
-function cleanLocation(value: string) {
+function cleanLocation(value = "") {
   try {
     const url = new URL(value);
     if (url.hostname.includes("google.")) return url.searchParams.get("query") || url.searchParams.get("q") || value;
@@ -139,18 +139,19 @@ async function generateResearchWithAi(context: Record<string, unknown>, fallback
   }
 }
 
-export async function researchBusiness(input: { companyName: string; website: string; mapLocation: string }): Promise<BusinessResearchResult> {
-  const website = normalizeWebsite(input.website);
+export async function researchBusiness(input: { companyName: string; businessType?: string; website?: string; mapLocation?: string }): Promise<BusinessResearchResult> {
+  const website = input.website?.trim() ? normalizeWebsite(input.website) : "";
   const location = cleanLocation(input.mapLocation);
   const [websiteMetadata, organizationResult] = await Promise.all([
-    readWebsiteMetadata(website),
-    enrichApolloOrganization({ companyName: input.companyName, website }).catch((error) => {
+    website ? readWebsiteMetadata(website) : Promise.resolve<Record<string, string>>({}),
+    website ? enrichApolloOrganization({ companyName: input.companyName, website }).catch((error) => {
       console.warn("[business-research] Apollo organization enrichment unavailable", error);
       return null;
-    }),
+    }) : Promise.resolve(null),
   ]);
   const organization = organizationResult;
-  const industry = organization?.industry || "Business services";
+  const businessType = input.businessType?.trim() || "Business services";
+  const industry = organization?.industry || businessType;
   const fallback = {
     companyName: input.companyName.trim(),
     website,
@@ -161,11 +162,11 @@ export async function researchBusiness(input: { companyName: string; website: st
     confidenceScore: organization || websiteMetadata.description ? 75 : 55,
     icp: fallbackIcp(industry, location),
   };
-  const researched = await generateResearchWithAi({ companyName: input.companyName, website, location, websiteMetadata, apolloOrganization: organization }, fallback);
+  const researched = await generateResearchWithAi({ companyName: input.companyName, businessType, website, location, websiteMetadata, apolloOrganization: organization }, fallback);
   return {
     ...researched,
     organization,
     websiteMetadata,
-    sources: [website, ...(organization ? ["Apollo organization enrichment"] : [])],
+    sources: [...(website ? [website] : []), ...(organization ? ["Apollo organization enrichment"] : [])],
   };
 }

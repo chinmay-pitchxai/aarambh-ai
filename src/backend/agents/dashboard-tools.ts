@@ -6,8 +6,6 @@ import { researchCompany } from "../services/company-research";
 import { generateICP as genICP, toIcpProfile } from "../services/icp-generation";
 import { randomUUID } from "crypto";
 
-const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
-
 // ── Lead Statistics ──
 export async function getLeadStats(tenantId: string) {
   const pipeline = await db
@@ -397,50 +395,39 @@ export async function initiateCall(
     return { success: false, error: "No phone number available for this lead" };
   }
 
-  const apiKey = process.env.VOBIZ_API_KEY;
+  // Submit a REAL call via the Vobiz adapter. The terminal outcome arrives
+  // via the provider status/hangup callback — never fabricated here.
+  const { requireVobizConfig } = await import("../config");
+  const { getVobizClient } = await import("../integrations/vobiz");
+  const { fromNumber } = requireVobizConfig();
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/vobiz`;
+
   let callId: string;
   let status: string;
-
-  if (!apiKey) {
-    callId = `dev-${randomUUID().slice(0, 8)}`;
-    status = "connected";
-  } else {
-    const res = await fetch(`${VOBIZ_API}/calls`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        to: phone,
-        from: process.env.VOBIZ_FROM_NUMBER,
-        webhook: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
-        record: true,
-      }),
+  try {
+    const result = await getVobizClient().initiateCall(fromNumber, phone, webhookUrl, {
+      timeout: 30,
+      callbackUrl: webhookUrl,
     });
-
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
-      return { success: false, error: `Vobiz dial failed: ${res.status} ${errBody}` };
-    }
-
-    const data = await res.json();
-    callId = data.call_id;
-    status = data.status;
+    callId = result.callId;
+    status = result.status;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { success: false, error: `Vobiz dial failed: ${msg}` };
   }
 
-  // Store call record
+  // Store pending call record (outcome filled in by webhook flow)
   const callIdDb = randomUUID();
   await db.insert(schema.calls).values({
     id: callIdDb,
     leadId: lead?.id || leadId,
     clientId: tenantId,
     vobizCallId: callId,
-    outcome: "no_answer",
-    durationSec: 0,
+    outcome: null,
+    durationSec: null,
     pitchUsed: "Manual call initiation from dashboard",
+    summary: `Manual call submitted (provider uuid ${callId}). Awaiting provider outcome via webhook.`,
     startedAt: new Date(),
-    endedAt: new Date(),
   });
 
   return {

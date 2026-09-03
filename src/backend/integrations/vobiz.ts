@@ -2,8 +2,18 @@ import { serverConfig, requireVobizConfig } from "../config";
 import { randomUUID } from "crypto";
 
 // ── Vobiz Telephony Adapter ──
-// Type-safe wrapper around Vobiz REST API (https://api.vobiz.in/v1).
-// All write operations use idempotency keys and track provider receipts.
+// Type-safe wrapper around the REAL Vobiz REST API (https://api.vobiz.ai).
+// Docs: https://docs.vobiz.ai / https://vobiz.ai/docs
+//
+// Auth: X-Auth-ID + X-Auth-Token headers (account credentials from
+// https://console.vobiz.ai). All write operations use idempotency keys and
+// track provider receipts.
+//
+// NOTE (honest capability reporting): the public Vobiz API documents call
+// initiation (answer_url VobizXML flow), CDR (status/history), number
+// inventory/purchase/release, hangup and balance. It does NOT document
+// server-side call recording retrieval or transcription endpoints, so those
+// capabilities are reported as unsupported here.
 
 export interface VobizError {
   status: number;
@@ -19,11 +29,15 @@ export class VobizApiError extends Error {
 }
 
 export interface NumberSearchResult {
+  inventoryId?: string;
   phoneNumber: string;
   friendlyName: string;
   areaCode: string;
   type: "local" | "toll_free" | "mobile";
   monthlyCost: number; // paise
+  setupCost?: number; // paise
+  currency?: string;
+  voiceEnabled?: boolean;
   available: boolean;
 }
 
@@ -35,7 +49,8 @@ export interface AllocatedNumber {
 }
 
 export interface CallInitiationResult {
-  callId: string;
+  callId: string; // Vobiz request_uuid (used for CDR lookup + hangup)
+  apiId?: string;
   status: string;
   providerReceipt: {
     idempotencyKey: string;
@@ -46,9 +61,11 @@ export interface CallInitiationResult {
 
 export interface CallStatusResult {
   callId: string;
-  status: "initiated" | "ringing" | "answered" | "completed" | "failed" | "busy" | "no_answer";
-  duration?: number;
-  recordingUrl?: string;
+  status: "initiated" | "ringing" | "answered" | "completed" | "failed" | "busy" | "no_answer" | "unknown";
+  duration?: number; // seconds (ring + talk)
+  billableSeconds?: number;
+  cost?: number;
+  currency?: string;
   hangupCause?: string;
   direction: "outbound" | "inbound";
   startedAt?: Date;
@@ -63,17 +80,36 @@ export interface TranscriptTurn {
   endMs?: number;
 }
 
+export interface VobizBalance {
+  balance: number;
+  currency: string;
+}
+
+export interface VobizHealth {
+  ok: boolean;
+  baseUrl: string;
+  dnsOk: boolean;
+  apiReachable: boolean;
+  authenticated: boolean;
+  latencyMs?: number;
+  error?: string;
+}
+
 // ── Webhook signature verification ──
+// Vobiz status callbacks (answer_url / hangup_url) post call fields; there is
+// no documented HMAC scheme for them. Keep this helper for deployments that
+// terminate webhooks behind a shared-secret check, but do NOT reject
+// unsigned provider callbacks by default — correlate via call UUID instead.
 
 export function verifyWebhookSignature(
   payload: string,
   signature: string | null,
   secret: string,
 ): boolean {
-  if (!signature) return false;
+  if (!signature || !secret) return false;
 
   try {
-    // Vobiz uses HMAC-SHA256 hex digest
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const crypto = require("crypto");
     const expected = crypto
       .createHmac("sha256", secret)
@@ -95,26 +131,33 @@ export function verifyWebhookSignature(
 
 export class VobizClient {
   private baseUrl: string;
-  private apiKey: string;
+  private authId: string;
+  private authToken: string;
   private fromNumber: string;
 
-  constructor(config?: { apiUrl?: string; apiKey?: string; fromNumber?: string }) {
+  constructor(config?: { apiUrl?: string; authId?: string; authToken?: string; fromNumber?: string }) {
     const cfg = config || {};
     this.baseUrl = (cfg.apiUrl || serverConfig.vobiz.apiUrl).replace(/\/$/, "");
-    this.apiKey = cfg.apiKey || serverConfig.vobiz.apiKey || "";
+    this.authId = cfg.authId || serverConfig.vobiz.authId || "";
+    this.authToken = cfg.authToken || serverConfig.vobiz.authToken || "";
     this.fromNumber = cfg.fromNumber || serverConfig.vobiz.fromNumber || "";
   }
 
   private get headers(): Record<string, string> {
     return {
-      Authorization: `Bearer ${this.apiKey}`,
+      "X-Auth-ID": this.authId,
+      "X-Auth-Token": this.authToken,
       "Content-Type": "application/json",
     };
   }
 
+  private accountPath(path: string): string {
+    return `${this.baseUrl}/api/v1/Account/${encodeURIComponent(this.authId)}${path}`;
+  }
+
   private async request<T>(
     method: string,
-    path: string,
+    url: string,
     body?: unknown,
     idempotencyKey?: string,
   ): Promise<{ data: T; apiRequestId?: string }> {
@@ -123,11 +166,11 @@ export class VobizClient {
       headers["Idempotency-Key"] = idempotencyKey;
     }
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const res = await fetch(url, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     });
 
     const apiRequestId = res.headers.get("x-request-id") || undefined;
@@ -135,14 +178,15 @@ export class VobizClient {
     if (!res.ok) {
       let errorBody: Record<string, unknown> = {};
       try {
-        errorBody = await res.json();
+        const parsed = await res.json();
+        errorBody = (parsed?.error && typeof parsed.error === "object" ? parsed.error : parsed) as Record<string, unknown>;
       } catch {
         // non-JSON error
       }
       throw new VobizApiError({
         status: res.status,
         code: String(errorBody.code || res.status),
-        message: String(errorBody.message || errorBody.error || `HTTP ${res.status}`),
+        message: String(errorBody.message || `HTTP ${res.status}`),
       });
     }
 
@@ -150,71 +194,101 @@ export class VobizClient {
     return { data, apiRequestId };
   }
 
-  // ── Number Management ──
+  // ── Number Management (real endpoints) ──
 
+  /** Numbers already owned by this Vobiz account. */
+  async listAccountNumbers(page = 1, perPage = 25): Promise<Array<{ id: string; e164: string; status: string; voiceEnabled: boolean; region?: string }>> {
+    const { data } = await this.request<{ items: Array<Record<string, unknown>> }>(
+      "GET",
+      this.accountPath(`/numbers?page=${page}&per_page=${perPage}`),
+    );
+    return (data.items || []).map((n) => ({
+      id: String(n.id ?? ""),
+      e164: String(n.e164 ?? ""),
+      status: String(n.status ?? ""),
+      voiceEnabled: Boolean(n.voice_enabled ?? n.capabilities ? (n.capabilities as Record<string, boolean>)?.voice : false),
+      region: n.region ? String(n.region) : undefined,
+    }));
+  }
+
+  /** Browse purchasable inventory numbers. `search` matches the E.164 digits (e.g. "9180"). */
   async searchNumbers(
     areaCode: string,
     type: "local" | "toll_free" | "mobile" = "local",
   ): Promise<NumberSearchResult[]> {
-    const { data } = await this.request<NumberSearchResult[]>(
+    const digits = areaCode.replace(/\D/g, "");
+    const params = new URLSearchParams({ country: "IN", per_page: "25" });
+    if (digits) params.set("search", digits);
+    const { data } = await this.request<{ items: Array<Record<string, unknown>> }>(
       "GET",
-      `/available-numbers?area_code=${encodeURIComponent(areaCode)}&type=${type}`,
+      this.accountPath(`/inventory/numbers?${params.toString()}`),
     );
-    return data;
+    return (data.items || [])
+      .filter((n) => String(n.status ?? "active") === "active")
+      .map((n) => {
+        const e164 = String(n.e164 ?? "");
+        const national = e164.replace(/^\+91/, "");
+        const monthlyFee = Number(n.monthly_fee ?? 0);
+        const setupFee = Number(n.setup_fee ?? 0);
+        return {
+          inventoryId: n.id ? String(n.id) : undefined,
+          phoneNumber: e164,
+          friendlyName: e164,
+          areaCode: national.slice(0, 4) || digits,
+          type: national.length === 10 ? "mobile" : type,
+          monthlyCost: Math.round(monthlyFee * 100),
+          setupCost: Math.round(setupFee * 100),
+          currency: n.currency ? String(n.currency) : "INR",
+          voiceEnabled: Boolean(n.voice_enabled ?? true),
+          available: true,
+        };
+      });
   }
 
+  /** Purchase an inventory number and assign it to this account. Debits setup + monthly fee. */
   async allocateNumber(
     tenantId: string,
     phoneNumber: string,
   ): Promise<AllocatedNumber> {
     const idempotencyKey = `alloc_${tenantId}_${phoneNumber}_${Date.now()}`;
-    const { data, apiRequestId } = await this.request<AllocatedNumber>(
+    const { data, apiRequestId } = await this.request<{ message: string; number: Record<string, unknown> }>(
       "POST",
-      "/incoming-numbers",
-      {
-        phone_number: phoneNumber,
-        webhook_url: `${serverConfig.appUrl}/api/v1/webhooks/vobiz`,
-        sms_webhook_url: `${serverConfig.appUrl}/api/v1/webhooks/vobiz`,
-        status_callback_url: `${serverConfig.appUrl}/api/v1/webhooks/vobiz`,
-      },
+      this.accountPath("/numbers/purchase-from-inventory"),
+      { e164: phoneNumber },
       idempotencyKey,
     );
+    void apiRequestId;
+    const num = data.number || {};
     return {
-      ...data,
+      phoneNumber: String(num.e164 ?? phoneNumber),
+      sid: String(num.id ?? phoneNumber),
       tenantId,
-      allocatedAt: new Date(),
-      providerReceipt: { idempotencyKey, apiRequestId },
-    } as AllocatedNumber & { providerReceipt: { idempotencyKey: string; apiRequestId?: string } };
+      allocatedAt: num.purchased_at ? new Date(String(num.purchased_at)) : new Date(),
+    };
   }
 
-  async releaseNumber(phoneNumber: string): Promise<void> {
+  /** Release a number back to inventory (24h pending_release cooldown unless immediate). */
+  async releaseNumber(phoneNumber: string, immediate = true): Promise<void> {
     const idempotencyKey = `release_${phoneNumber}_${Date.now()}`;
-    await this.request("DELETE", `/incoming-numbers/${encodeURIComponent(phoneNumber)}`, undefined, idempotencyKey);
-  }
-
-  async configureWebhook(
-    phoneNumber: string,
-    webhookUrl: string,
-  ): Promise<void> {
-    const idempotencyKey = `whk_${phoneNumber}_${Date.now()}`;
+    const encoded = encodeURIComponent(phoneNumber.startsWith("+") ? phoneNumber : `+${phoneNumber}`);
     await this.request(
-      "POST",
-      `/incoming-numbers/${encodeURIComponent(phoneNumber)}`,
-      {
-        voice_url: webhookUrl,
-        voice_method: "POST",
-        status_callback_url: webhookUrl,
-      },
+      "DELETE",
+      this.accountPath(`/numbers/${encoded}${immediate ? "?immediate=true" : ""}`),
+      undefined,
       idempotencyKey,
     );
   }
 
-  // ── Call Management ──
+  // ── Call Management (real endpoints) ──
 
+  /**
+   * Initiate an outbound call. Vobiz fetches `answerUrl` (must return VobizXML)
+   * when the callee answers. Returns the provider call UUID.
+   */
   async initiateCall(
     from: string,
     to: string,
-    webhookUrl: string,
+    answerUrl: string,
     options?: {
       record?: boolean;
       timeout?: number;
@@ -224,29 +298,29 @@ export class VobizClient {
   ): Promise<CallInitiationResult> {
     const idempotencyKey = `call_${Date.now()}_${randomUUID().slice(0, 8)}`;
 
+    // NOTE: the public Call API documents from/to/answer_url/answer_method
+    // (+time_limit). `record`/`machineDetection` have no documented request
+    // fields and are accepted for forward-compat but not sent.
     const body: Record<string, unknown> = {
-      to,
       from: from || this.fromNumber,
-      url: webhookUrl,
-      method: "POST",
-      record: options?.record ?? true,
-      status_callback: options?.callbackUrl || webhookUrl,
-      status_callback_method: "POST",
+      to,
+      answer_url: answerUrl,
+      answer_method: "POST",
     };
+    if (options?.timeout) body.time_limit = options.timeout;
+    if (options?.callbackUrl) body.hangup_url = options.callbackUrl;
 
-    if (options?.timeout) body.timeout = options.timeout;
-    if (options?.machineDetection) body.machine_detection = options.machineDetection;
-
-    const { data, apiRequestId } = await this.request<{ call_id: string; status: string }>(
+    const { data, apiRequestId } = await this.request<{ api_id: string; message: string; request_uuid: string }>(
       "POST",
-      "/calls",
+      this.accountPath("/Call/"),
       body,
       idempotencyKey,
     );
 
     return {
-      callId: data.call_id,
-      status: data.status,
+      callId: data.request_uuid,
+      apiId: data.api_id,
+      status: data.message || "initiated",
       providerReceipt: {
         idempotencyKey,
         initiatedAt: new Date(),
@@ -255,54 +329,160 @@ export class VobizClient {
     };
   }
 
-  async getCallStatus(callId: string): Promise<CallStatusResult> {
-    const { data } = await this.request<CallStatusResult>("GET", `/calls/${callId}`);
+  /** Hang up a live call by provider UUID. Triggers the hangup callback + final CDR. */
+  async hangupCall(callUuid: string): Promise<void> {
+    await this.request(
+      "DELETE",
+      this.accountPath(`/Call/${encodeURIComponent(callUuid)}/`),
+    );
+  }
+
+  /** Call detail record lookup. Maps provider fields to our status model. */
+  async getCallStatus(callUuid: string): Promise<CallStatusResult> {
+    const { data } = await this.request<{ data?: Record<string, unknown> } | Record<string, unknown>>(
+      "GET",
+      this.accountPath(`/cdr/${encodeURIComponent(callUuid)}`),
+    );
+    const cdr = ((data as Record<string, unknown>)?.data as Record<string, unknown>) || (data as Record<string, unknown>);
+    return this.mapCdr(cdr, callUuid);
+  }
+
+  /** Recent CDRs (defaults to last 20). */
+  async listRecentCalls(limit = 20): Promise<CallStatusResult[]> {
+    const { data } = await this.request<{ data: Array<Record<string, unknown>> }>(
+      "GET",
+      this.accountPath(`/cdr/recent?limit=${Math.max(1, Math.min(limit, 100))}`),
+    );
+    return (data.data || []).map((cdr) => this.mapCdr(cdr, String(cdr.uuid ?? "")));
+  }
+
+  private mapCdr(cdr: Record<string, unknown>, fallbackId: string): CallStatusResult {
+    const answerTime = cdr.answer_time ? new Date(String(cdr.answer_time)) : null;
+    const hangup = String(cdr.hangup_cause ?? "");
+    let status: CallStatusResult["status"] = "unknown";
+    if (answerTime) status = "completed";
+    else if (hangup === "NO_ANSWER") status = "no_answer";
+    else if (hangup === "USER_BUSY") status = "busy";
+    else if (hangup === "NORMAL_CLEARING" || hangup === "") status = "failed";
+    else if (hangup) status = "failed";
+
     return {
-      ...data,
-      startedAt: data.startedAt ? new Date(data.startedAt as unknown as string) : undefined,
-      answeredAt: data.answeredAt ? new Date(data.answeredAt as unknown as string) : undefined,
-      endedAt: data.endedAt ? new Date(data.endedAt as unknown as string) : undefined,
+      callId: String(cdr.uuid ?? fallbackId),
+      status,
+      duration: cdr.duration != null ? Number(cdr.duration) : undefined,
+      billableSeconds: cdr.billsec != null ? Number(cdr.billsec) : undefined,
+      cost: cdr.total_cost != null ? Number(cdr.total_cost) : cdr.cost != null ? Number(cdr.cost) : undefined,
+      currency: cdr.currency ? String(cdr.currency) : undefined,
+      hangupCause: hangup || undefined,
+      direction: cdr.call_direction === "inbound" ? "inbound" : "outbound",
+      startedAt: cdr.start_time ? new Date(String(cdr.start_time)) : undefined,
+      answeredAt: answerTime || undefined,
+      endedAt: cdr.end_time ? new Date(String(cdr.end_time)) : undefined,
     };
   }
 
-  async getCallRecording(callId: string): Promise<{ recordingUrl: string; duration: number } | null> {
-    try {
-      const { data } = await this.request<{ recording_url: string; duration: number }>(
-        "GET",
-        `/calls/${callId}/recording`,
-      );
-      return { recordingUrl: data.recording_url, duration: data.duration };
-    } catch (err) {
-      if (err instanceof VobizApiError && err.vobizError.status === 404) return null;
-      throw err;
-    }
+  /**
+   * Recording retrieval: the public Vobiz API does not document a recording
+   * download endpoint, so this honestly reports unsupported.
+   */
+  async getCallRecording(_callId: string): Promise<{ recordingUrl: string; duration: number } | null> {
+    void _callId;
+    return null;
   }
 
-  async getCallTranscript(callId: string): Promise<TranscriptTurn[]> {
+  /** Transcripts are produced by our own voice pipeline (Gemini Live), not Vobiz. */
+  async getCallTranscript(_callId: string): Promise<TranscriptTurn[]> {
+    void _callId;
+    return [];
+  }
+
+  /** Account balance (best-effort; returns null when the endpoint is unavailable). */
+  async getBalance(currency = "INR"): Promise<VobizBalance | null> {
     try {
-      const { data } = await this.request<{ transcript: TranscriptTurn[] }>(
+      const { data } = await this.request<Record<string, unknown>>(
         "GET",
-        `/calls/${callId}/transcript`,
+        this.accountPath(`/balance?currency=${encodeURIComponent(currency)}`),
       );
-      return data.transcript || [];
+      const balance = Number(data.balance ?? data.available_balance ?? NaN);
+      if (Number.isNaN(balance)) return null;
+      return { balance, currency: String(data.currency ?? currency) };
     } catch {
-      return [];
+      return null;
     }
   }
 
-  // ── Capability check ──
+  /**
+   * Connectivity probe. Distinguishes: DNS/network down, API down,
+   * missing credentials, and bad credentials — without mutating anything.
+   */
+  async healthCheck(): Promise<VobizHealth> {
+    const started = Date.now();
+    if (!this.authId || !this.authToken) {
+      return {
+        ok: false,
+        baseUrl: this.baseUrl,
+        dnsOk: true,
+        apiReachable: false,
+        authenticated: false,
+        error: "Missing credentials. Set VOBIZ_AUTH_ID and VOBIZ_AUTH_TOKEN from the Vobiz Console (console.vobiz.ai).",
+      };
+    }
+    try {
+      await this.request("GET", this.accountPath("/numbers?per_page=1"));
+      return {
+        ok: true,
+        baseUrl: this.baseUrl,
+        dnsOk: true,
+        apiReachable: true,
+        authenticated: true,
+        latencyMs: Date.now() - started,
+      };
+    } catch (err) {
+      if (err instanceof VobizApiError && err.vobizError.status === 401) {
+        return {
+          ok: false,
+          baseUrl: this.baseUrl,
+          dnsOk: true,
+          apiReachable: true,
+          authenticated: false,
+          latencyMs: Date.now() - started,
+          error: "API reachable but credentials rejected (401). Check VOBIZ_AUTH_ID / VOBIZ_AUTH_TOKEN.",
+        };
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      const dnsDown = /fetch failed|ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(message);
+      return {
+        ok: false,
+        baseUrl: this.baseUrl,
+        dnsOk: !dnsDown,
+        apiReachable: false,
+        authenticated: false,
+        latencyMs: Date.now() - started,
+        error: message,
+      };
+    }
+  }
+
+  // ── Capability check (verified against public docs) ──
 
   get capabilities() {
     return {
       outboundCalling: true,
-      inboundCalling: true,
-      recording: true,
-      transcription: true,
-      machineDetection: true,
-      numberProvisioning: true,
-      webhookSignatures: true,
+      hangup: true,
+      callDetailsCdr: true,
+      recordingRetrieval: false, // no public retrieval endpoint documented
+      transcription: false, // produced by our own voice pipeline
+      machineDetection: false, // no documented request field
+      numberProvisioning: true, // inventory browse + purchase + release
+      webhookSignatures: false, // callbacks carry call UUID; correlate via CDR
     };
   }
+}
+
+/** Convenience: throws a clear error when Vobiz is not configured. */
+export function requireVobizClient(): VobizClient {
+  requireVobizConfig();
+  return getVobizClient();
 }
 
 // Singleton instance
@@ -313,4 +493,8 @@ export function getVobizClient(): VobizClient {
     _client = new VobizClient();
   }
   return _client;
+}
+
+export function resetVobizClient(): void {
+  _client = null;
 }

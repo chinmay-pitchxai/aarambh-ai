@@ -33,13 +33,34 @@ export default function ConnectionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [postPayment, setPostPayment] = useState(false);
+  const [tenantId, setTenantId] = useState<string>("demo");
+  const [needsSetup, setNeedsSetup] = useState<Record<string, boolean>>({});
+  const [vobizDetail, setVobizDetail] = useState<string | null>(null);
 
-  const fetchAllStatuses = useCallback(async () => {
+  const fetchAllStatuses = useCallback(async (tid: string) => {
     try {
       const results: Record<string, { connected: boolean; status?: string; accountEmail?: string }> = {};
       for (const app of INTEGRATIONS) {
+        if (app.id === "vobiz") {
+          // Vobiz is a direct API integration — status comes from its own probe.
+          try {
+            const res = await fetch("/api/v1/integrations/vobiz/status", { credentials: "include" });
+            if (res.ok) {
+              const data = await res.json();
+              results[app.id] = {
+                connected: data.connected === true,
+                status: data.connected ? "active" : data.error || "not configured",
+              };
+            } else {
+              results[app.id] = { connected: false };
+            }
+          } catch {
+            results[app.id] = { connected: false };
+          }
+          continue;
+        }
         try {
-          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=demo`);
+          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=${encodeURIComponent(tid)}`);
           if (res.ok) {
             const data = await res.json();
             results[app.id] = { connected: data.connected, status: data.status, accountEmail: data.accountEmail };
@@ -72,26 +93,101 @@ export default function ConnectionsPage() {
     if (connected) {
       setSuccess(`${connected} connected successfully!`);
       window.history.replaceState({}, "", "/connections");
-      fetchAllStatuses();
     }
     if (errParam) {
       setError(`Connection failed: ${decodeURIComponent(errParam)}`);
       window.history.replaceState({}, "", "/connections");
     }
-    fetchAllStatuses();
+
+    // Resolve the real tenant (org) for Composio lookups — never hardcode "demo".
+    fetch("/api/auth/session", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const tid = data?.org?.id || "demo";
+        setTenantId(tid);
+        fetchAllStatuses(tid);
+        if (connected) fetchAllStatuses(tid);
+      })
+      .catch(() => fetchAllStatuses("demo"));
   }, [fetchAllStatuses]);
 
+  async function handleVobizCheck() {
+    setConnecting("vobiz");
+    setError(null);
+    setSuccess(null);
+    setVobizDetail(null);
+    try {
+      const res = await fetch("/api/v1/integrations/vobiz/status", { credentials: "include" });
+      const data = await res.json();
+      if (data.connected) {
+        const bits = [
+          `API reachable (${data.latencyMs ?? "?"}ms)`,
+          data.balance ? `balance ${data.balance.balance} ${data.balance.currency}` : null,
+          data.hasProvisionedNumber ? "number provisioned" : "no number provisioned yet",
+        ].filter(Boolean);
+        setVobizDetail(bits.join(" · "));
+        setSuccess("Vobiz is connected and authenticated.");
+        setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
+      } else {
+        setVobizDetail(data.error || "Not configured");
+        setError(data.setup || data.error || "Vobiz is not connected");
+        setConnections((prev) => ({ ...prev, vobiz: { connected: false, status: data.error } }));
+      }
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setConnecting(null);
+    }
+  }
+
+  async function handleCalendarSetup() {
+    setConnecting("google_calendar");
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/v1/calendar/auth-config", { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Failed to set up Google Calendar");
+        return;
+      }
+      setNeedsSetup((prev) => ({ ...prev, google_calendar: false }));
+      setSuccess(data.message || "Google Calendar is ready to connect.");
+      // Immediately start the OAuth connect flow.
+      await handleConnect("google_calendar");
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setConnecting(null);
+    }
+  }
+
   async function handleConnect(integration: string) {
+    if (integration === "vobiz") {
+      await handleVobizCheck();
+      return;
+    }
     setConnecting(integration);
     setError(null);
     setSuccess(null);
 
     try {
-      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=demo`);
+      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
       const data = await res.json();
 
       if (!res.ok) {
         setError(data.error || "Failed to initiate connection");
+        return;
+      }
+      if (data.needsConfig) {
+        // No Composio auth config exists. For Google Calendar we can create
+        // it automatically — offer the one-click setup.
+        if (integration === "google_calendar") {
+          setNeedsSetup((prev) => ({ ...prev, [integration]: true }));
+          setError("Google Calendar needs a one-time setup in Composio. Click “Set up Google Calendar” below to create it, then connect.");
+        } else {
+          setError(data.error || `No auth config found for "${integration}". Create one in the Composio dashboard first.`);
+        }
         return;
       }
       if (data.alreadyConnected) {
@@ -121,7 +217,7 @@ export default function ConnectionsPage() {
       const res = await fetch("/api/composio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "disconnect", integration, clientId: "demo" }),
+        body: JSON.stringify({ action: "disconnect", integration, clientId: tenantId }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -252,20 +348,44 @@ export default function ConnectionsPage() {
                 {isConnected && status?.accountEmail && (
                   <div style={{ fontSize: 11, color: "var(--text-light)" }}>{status.accountEmail}</div>
                 )}
+                {app.id === "vobiz" && vobizDetail && (
+                  <div style={{ fontSize: 11, color: "var(--text-light)" }}>{vobizDetail}</div>
+                )}
+                {app.id === "google_calendar" && needsSetup[app.id] && !isConnected && (
+                  <button
+                    onClick={handleCalendarSetup}
+                    disabled={connecting === app.id}
+                    style={{
+                      width: "100%", padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 600,
+                      cursor: "pointer", background: "var(--amber)", color: "#fff", border: "1px solid var(--amber)",
+                      opacity: connecting === app.id ? 0.5 : 1,
+                    }}
+                  >
+                    {connecting === app.id ? "..." : "Set up Google Calendar"}
+                  </button>
+                )}
 
                 <button
-                  onClick={() => isConnected ? handleDisconnect(app.id) : handleConnect(app.id)}
+                  onClick={() => {
+                    if (app.id === "vobiz") {
+                      handleVobizCheck();
+                    } else if (isConnected) {
+                      handleDisconnect(app.id);
+                    } else {
+                      handleConnect(app.id);
+                    }
+                  }}
                   disabled={connecting === app.id}
                   style={{
                     marginTop: "auto", width: "100%", padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500,
                     cursor: "pointer",
-                    background: isConnected ? "var(--surface-2)" : "var(--accent)",
-                    color: isConnected ? "var(--text-dim)" : "#fff",
-                    border: `1px solid ${isConnected ? "var(--border)" : "var(--accent)"}`,
+                    background: isConnected && app.id !== "vobiz" ? "var(--surface-2)" : "var(--accent)",
+                    color: isConnected && app.id !== "vobiz" ? "var(--text-dim)" : "#fff",
+                    border: `1px solid ${isConnected && app.id !== "vobiz" ? "var(--border)" : "var(--accent)"}`,
                     opacity: connecting === app.id ? 0.5 : 1,
                   }}
                 >
-                  {connecting === app.id ? "..." : isConnected ? "Disconnect" : "Connect"}
+                  {connecting === app.id ? "..." : app.id === "vobiz" ? "Check connection" : isConnected ? "Disconnect" : "Connect"}
                 </button>
               </div>
             );
