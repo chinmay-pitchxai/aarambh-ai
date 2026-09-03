@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/backend/db";
 import { requireAuth } from "@/backend/auth/middleware";
 
@@ -48,4 +48,26 @@ export async function GET() {
         : null,
     },
   });
+}
+
+export async function POST(request: NextRequest) {
+  const auth = await requireAuth();
+  if (!auth.ok) return auth.response;
+
+  const [subscription] = await db
+    .select()
+    .from(schema.subscriptions)
+    .where(and(
+      eq(schema.subscriptions.organizationId, auth.ctx.tenantId),
+      eq(schema.subscriptions.status, "active"),
+    ))
+    .orderBy(desc(schema.subscriptions.createdAt))
+    .limit(1);
+
+  if (!subscription) {
+    return NextResponse.json({ error: "No active subscription found" }, { status: 404 });
+  }
+
+  const origin = request.headers.get("origin") || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  return NextResponse.redirect(new URL("/connections?activated=true", origin));
 }

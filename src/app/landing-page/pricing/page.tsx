@@ -212,7 +212,7 @@ export default function PricingPage() {
                 </ul>
 
                 <Link
-                  href="/dashboard"
+                  href="/auth/login"
                   className="btn-lift"
                   style={{
                     display: "block", textAlign: "center", textDecoration: "none",
@@ -299,7 +299,7 @@ export default function PricingPage() {
           <p style={{ fontSize: 16, color: "rgba(255,255,255,0.9)", marginBottom: 32, lineHeight: 1.6 }}>
             14 days free. No credit card. Tell us what you sell — we&apos;ll show you the leads.
           </p>
-          <Link href="/dashboard" className="btn-lift" style={{
+           <Link href="/auth/login" className="btn-lift" style={{
             background: "#fff", color: "var(--terracotta)", textDecoration: "none",
             padding: "14px 32px", fontSize: 14, borderRadius: 10, fontWeight: 600,
             display: "inline-block",

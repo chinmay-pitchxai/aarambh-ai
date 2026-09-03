@@ -19,9 +19,11 @@ const SLUG_MAP: Record<string, string> = {
   whatsapp: "whatsapp",
   google_maps: "google_maps",
   google_calendar: "googlecalendar",
+  googlemeet: "googlemeet",
   slack: "slack",
   hubspot: "hubspot",
   notion: "notion",
+  vobiz: "vobiz",
 };
 
 let authConfigMapLoaded = false;

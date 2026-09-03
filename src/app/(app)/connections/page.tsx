@@ -9,21 +9,16 @@ interface Integration {
   icon: string;
   category: string;
   color: string;
+  via?: string;
 }
 
 const INTEGRATIONS: Integration[] = [
-  { id: "gmail", name: "Gmail", desc: "Email outreach + calendar access", icon: "✉", category: "Email", color: "#C17C60" },
-  { id: "google_calendar", name: "Google Calendar", desc: "Schedule meetings and check availability", icon: "📅", category: "Meetings", color: "#4285F4" },
-  { id: "whatsapp", name: "WhatsApp", desc: "Send messages and nurture leads", icon: "◈", category: "Messaging", color: "#7A9A7E" },
-  { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B" },
-  { id: "zoom", name: "Zoom", desc: "Schedule and host video calls", icon: "◎", category: "Meetings", color: "#4A8BC2" },
-  { id: "microsoft_teams", name: "Microsoft Teams", desc: "Chat, meet, and collaborate", icon: "◻", category: "Meetings", color: "#6264A7" },
-  { id: "slack", name: "Slack", desc: "Get alerts for bookings & failures", icon: "⬢", category: "Ops", color: "#B0A9A0" },
-  { id: "hubspot", name: "HubSpot", desc: "Sync contacts & deals to CRM", icon: "⬡", category: "CRM", color: "#C9A86A" },
-  { id: "salesforce", name: "Salesforce", desc: "Enterprise CRM sync", icon: "◆", category: "CRM", color: "#4A8BC2" },
+  { id: "whatsapp", name: "WhatsApp Business", desc: "Send messages and nurture leads via WhatsApp", icon: "◈", category: "Messaging", color: "#7A9A7E", via: "Composio" },
+  { id: "gmail", name: "Gmail", desc: "Email outreach and calendar access via Gmail", icon: "✉", category: "Email", color: "#C17C60", via: "Composio" },
+  { id: "google_calendar", name: "Google Calendar", desc: "Schedule meetings and check availability", icon: "📅", category: "Meetings", color: "#4285F4", via: "Composio" },
+  { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B", via: "Composio" },
+  { id: "vobiz", name: "Vobiz", desc: "Phone calls and voice outreach", icon: "📞", category: "Phone", color: "#6B8E7B", via: "API" },
 ];
-
-const CLIENT_ID = "demo";
 
 export default function ConnectionsPage() {
   const [connections, setConnections] = useState<Record<string, { connected: boolean; status?: string; accountEmail?: string }>>({});
@@ -33,13 +28,14 @@ export default function ConnectionsPage() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [postPayment, setPostPayment] = useState(false);
 
   const fetchAllStatuses = useCallback(async () => {
     try {
       const results: Record<string, { connected: boolean; status?: string; accountEmail?: string }> = {};
       for (const app of INTEGRATIONS) {
         try {
-          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=${CLIENT_ID}`);
+          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=demo`);
           if (res.ok) {
             const data = await res.json();
             results[app.id] = { connected: data.connected, status: data.status, accountEmail: data.accountEmail };
@@ -62,7 +58,13 @@ export default function ConnectionsPage() {
     const params = new URLSearchParams(window.location.search);
     const connected = params.get("connected");
     const errParam = params.get("error");
+    const activated = params.get("activated");
 
+    if (activated === "true") {
+      setPostPayment(true);
+      setSuccess("Subscription activated! Connect your accounts to start automating.");
+      window.history.replaceState({}, "", "/connections");
+    }
     if (connected) {
       setSuccess(`${connected} connected successfully!`);
       window.history.replaceState({}, "", "/connections");
@@ -81,7 +83,7 @@ export default function ConnectionsPage() {
     setSuccess(null);
 
     try {
-      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${CLIENT_ID}`);
+      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=demo`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -115,7 +117,7 @@ export default function ConnectionsPage() {
       const res = await fetch("/api/composio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "disconnect", integration, clientId: CLIENT_ID }),
+        body: JSON.stringify({ action: "disconnect", integration, clientId: "demo" }),
       });
       const data = await res.json();
       if (res.ok) {
@@ -145,9 +147,25 @@ export default function ConnectionsPage() {
       <div style={{ marginBottom: 32 }}>
         <h1 style={{ fontSize: 28, fontWeight: 300, letterSpacing: "0.02em", margin: 0 }}>Connections</h1>
         <p style={{ color: "var(--text-dim)", fontSize: 14, marginTop: 6, letterSpacing: "0.02em" }}>
-          Connect your tools — one click via Composio
+          {postPayment
+            ? "Connect your accounts to start automating"
+            : "Connect your tools — one click via Composio"}
         </p>
       </div>
+
+      {postPayment && (
+        <div style={{
+          marginBottom: 24, padding: 16, borderRadius: 12,
+          background: "rgba(122,154,126,0.08)", border: "1px solid rgba(122,154,126,0.25)",
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <span style={{ fontSize: 18 }}>✓</span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--green)" }}>Subscription activated</div>
+            <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 2 }}>Connect at least one channel below to begin lead automation.</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 12, marginBottom: 28, flexWrap: "wrap", alignItems: "center" }}>
         <input
@@ -200,7 +218,7 @@ export default function ConnectionsPage() {
       {loading ? (
         <div style={{ padding: 60, textAlign: "center", color: "var(--text-light)", letterSpacing: "0.06em", fontSize: 13, textTransform: "uppercase" }}>Loading —</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 16 }}>
           {filtered.map((app) => {
             const status = connections[app.id];
             const isConnected = status?.connected || false;
@@ -218,7 +236,9 @@ export default function ConnectionsPage() {
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)", letterSpacing: "0.02em" }}>{app.name}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.06em", textTransform: "uppercase" }}>{app.category}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-light)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                      {app.via ? `${app.category} · ${app.via}` : app.category}
+                    </div>
                   </div>
                   {isConnected && <span style={{ fontSize: 11, color: "var(--green)", background: "rgba(122,154,126,0.12)", padding: "4px 8px", borderRadius: 10, border: "1px solid rgba(122,154,126,0.2)" }}>●</span>}
                 </div>

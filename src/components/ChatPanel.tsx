@@ -20,15 +20,23 @@ export function ChatPanel() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [authenticated, setAuthenticated] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (open && !historyLoaded) {
-      fetch("/api/v1/chat/history?limit=50")
-        .then((r) => r.json())
+      fetch("/api/v1/chat/history?limit=50", { credentials: "include" })
+        .then((r) => {
+          if (r.status === 401) {
+            setAuthenticated(false);
+            setHistoryLoaded(true);
+            return null;
+          }
+          return r.json();
+        })
         .then((data) => {
-          if (data.messages) setMessages(data.messages);
+          if (data?.messages) setMessages(data.messages);
           setHistoryLoaded(true);
         })
         .catch(() => setHistoryLoaded(true));
@@ -69,7 +77,19 @@ export function ChatPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
+        credentials: "include",
       });
+      if (res.status === 401) {
+        setAuthenticated(false);
+        const authMsg: Message = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Please log in to use the dashboard assistant.",
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, authMsg]);
+        return;
+      }
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed");
 
@@ -192,7 +212,24 @@ export function ChatPanel() {
               gap: 12,
             }}
           >
-            {messages.length === 0 && (
+            {!authenticated && (
+              <div
+                style={{
+                  textAlign: "center",
+                  color: "var(--text-dim)",
+                  fontSize: 13,
+                  padding: "40px 20px",
+                  lineHeight: 1.6,
+                }}
+              >
+                Please{" "}
+                <a href="/login" style={{ color: "var(--accent)", textDecoration: "underline" }}>
+                  log in
+                </a>{" "}
+                to use the dashboard assistant.
+              </div>
+            )}
+            {authenticated && messages.length === 0 && (
               <div
                 style={{
                   textAlign: "center",
@@ -292,6 +329,7 @@ export function ChatPanel() {
           </div>
 
           {/* Input */}
+          {authenticated && (
           <div
             style={{
               padding: "12px 16px",
@@ -341,6 +379,7 @@ export function ChatPanel() {
               Send
             </button>
           </div>
+          )}
         </div>
       )}
     </>

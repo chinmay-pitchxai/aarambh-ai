@@ -27,6 +27,10 @@ const configSchema = z.object({
   VOICE_MODEL: optional,
   VOICE_NAME: optional,
   VOICE_LANGUAGE: optional,
+  COMPOSIO_API_KEY: optional,
+  CALENDAR_PROVIDER: z.enum(["composio", "google"]).default("composio"),
+  AUTO_ONBOARD_ENABLED: z.enum(["true", "false"]).default("true"),
+  FREE_SAMPLE_LEADS: z.preprocess((v) => (typeof v === "string" && v.trim() ? Number(v) : v), z.number().int().min(0).default(3)),
 }).superRefine((environment, context) => {
   if (environment.NODE_ENV !== "production") return;
   const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
@@ -76,6 +80,12 @@ export function parseServerConfig(input: Record<string, string | undefined>) {
       name: environment.VOICE_NAME || "Kore",
       language: environment.VOICE_LANGUAGE || "en-IN",
     }),
+    composio: Object.freeze({
+      apiKey: environment.COMPOSIO_API_KEY,
+    }),
+    calendarProvider: environment.CALENDAR_PROVIDER,
+    autoOnboardEnabled: environment.AUTO_ONBOARD_ENABLED === "true",
+    freeSampleLeads: environment.FREE_SAMPLE_LEADS,
     webhooks: Object.freeze({
       vobizSecret: environment.VOBIZ_WEBHOOK_SECRET,
       whatsappSecret: environment.WHATSAPP_WEBHOOK_SECRET,

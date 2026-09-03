@@ -201,7 +201,7 @@ export default function FeaturesPage() {
           <h2 style={{ fontSize: 28, fontWeight: 400, color: "var(--text)", marginBottom: 16, fontFamily: "Playfair Display, serif" }}>Ready to See It in Action?</h2>
           <p style={{ fontSize: 15, color: "var(--text-dim)", marginBottom: 28 }}>Tell us what you sell. We&apos;ll show you the leads. 14-day free trial, no credit card.</p>
           <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-            <Link href="/dashboard" className="btn-lift" style={{
+            <Link href="/auth/login" className="btn-lift" style={{
               background: "var(--accent)", color: "#fff", textDecoration: "none",
               padding: "12px 28px", fontSize: 13, borderRadius: 8, fontWeight: 500,
               fontFamily: "Playfair Display, serif",

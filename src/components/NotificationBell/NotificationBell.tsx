@@ -48,12 +48,19 @@ export default function NotificationBell() {
   const [loading, setLoading] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
+  const [authenticated, setAuthenticated] = useState(true);
+
   const fetchUnread = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/notifications/unread");
+      const res = await fetch("/api/v1/notifications/unread", { credentials: "include" });
+      if (res.status === 401) {
+        setAuthenticated(false);
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setUnreadCount(data.unreadCount ?? 0);
+        setAuthenticated(true);
       }
     } catch { /* silent */ }
   }, []);
@@ -61,11 +68,17 @@ export default function NotificationBell() {
   const fetchNotifications = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/v1/notifications?limit=10");
+      const res = await fetch("/api/v1/notifications?limit=10", { credentials: "include" });
+      if (res.status === 401) {
+        setAuthenticated(false);
+        setLoading(false);
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.notifications ?? []);
         setUnreadCount(data.unreadCount ?? 0);
+        setAuthenticated(true);
       }
     } catch { /* silent */ }
     setLoading(false);
@@ -97,6 +110,7 @@ export default function NotificationBell() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "mark_all_read" }),
+        credentials: "include",
       });
       if (res.ok) {
         setUnreadCount(0);
@@ -104,6 +118,8 @@ export default function NotificationBell() {
       }
     } catch { /* silent */ }
   };
+
+  if (!authenticated) return null;
 
   return (
     <div ref={panelRef} style={{ position: "relative" }}>
