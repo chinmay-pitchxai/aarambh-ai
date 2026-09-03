@@ -277,6 +277,14 @@ function LoginForm() {
           Sign up
         </Link>
       </div>
+      <div style={{ textAlign: "center", marginTop: 12, fontSize: 12 }}>
+        <button
+          onClick={() => { document.cookie = "session=; path=/; max-age=0"; window.location.reload(); }}
+          style={{ background: "none", border: "none", color: "var(--text-light)", cursor: "pointer", fontSize: 12, textDecoration: "underline" }}
+        >
+          Clear session &amp; retry
+        </button>
+      </div>
     </div>
   );
 }

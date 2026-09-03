@@ -19,11 +19,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
-    await createSession(user.id);
-
-    return NextResponse.json({
+    const response = NextResponse.json({
       user: { id: user.id, email: user.email, name: user.name },
     });
+
+    // Clear any stale session cookies before creating new one
+    response.cookies.set("session", "", { maxAge: 0, path: "/" });
+
+    await createSession(user.id);
+
+    return response;
   } catch (error) {
     console.error("[auth/login]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
