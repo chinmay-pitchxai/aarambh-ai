@@ -2,6 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/backend/db";
+import Redis from "ioredis";
+import { createDurableQueue } from "@/backend/queue/durable-queue";
+import { handleCallEvent } from "@/backend/telephony/call-engine";
 
 function authorized(request: Request) {
   const expected = process.env.VOBIZ_WEBHOOK_SECRET;
@@ -37,6 +40,28 @@ export async function POST(request: Request) {
     if (typeof payload.duration_sec === "number") changes.durationSec = Math.round(payload.duration_sec);
     if (payload.ended_at) changes.endedAt = new Date(payload.ended_at);
     if (Object.keys(changes).length > 0) await db.update(schema.calls).set(changes).where(eq(schema.calls.vobizCallId, String(callId)));
+
+    // A completed telephony callback is the hand-off to retries, WhatsApp
+    // follow-ups, or booking. Persisting it alone leaves the lead stranded.
+    const eventType = typeof payload.event_type === "string"
+      ? payload.event_type
+      : typeof payload.status === "string" && ["no_answer", "busy", "failed"].includes(payload.status)
+        ? "call.failed"
+        : "call.completed";
+    const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379", {
+      lazyConnect: true,
+      connectTimeout: 2_000,
+      maxRetriesPerRequest: 1,
+    });
+    try {
+      await handleCallEvent(db, createDurableQueue(redis, "call-outcome"), {
+        vobizCallId: String(callId),
+        eventType,
+        payload: payload as Record<string, unknown>,
+      });
+    } finally {
+      redis.disconnect();
+    }
     return NextResponse.json({ received: true });
   } catch (error) {
     console.error("[webhooks/vobiz]", error);

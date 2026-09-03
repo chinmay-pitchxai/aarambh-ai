@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const protectedRoutes = ["/dashboard", "/leads", "/connections", "/activity", "/wallet-balance"];
-const authRoutes = ["/auth/login", "/auth/signup"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -14,12 +13,6 @@ export function middleware(request: NextRequest) {
       const loginUrl = new URL("/auth/login", request.url);
       loginUrl.searchParams.set("from", pathname);
       return NextResponse.redirect(loginUrl);
-    }
-  }
-
-  if (authRoutes.some((route) => pathname.startsWith(route))) {
-    if (isAuthenticated) {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   }
 

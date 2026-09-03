@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { findUserByEmail, createUser, hashPassword } from "@/backend/auth";
 import { db } from "@/backend/db";
 import { oauthAccounts, users, organizations, organizationMembers, sessions } from "@/backend/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { nanoid } from "@/backend/auth/nanoid";
 
 const SESSION_DURATION_MS = 30 * 24 * 60 * 60 * 1000;
@@ -67,7 +67,7 @@ export async function GET(req: Request) {
       });
 
       const orgId = nanoid();
-      const slug = googleUser.email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "-");
+      const slug = `${googleUser.email.split("@")[0].toLowerCase().replace(/[^a-z0-9]/g, "-")}-${orgId.slice(0, 6)}`;
 
       await db.insert(organizations).values({
         id: orgId,
@@ -85,7 +85,7 @@ export async function GET(req: Request) {
       user = { id: userId, email: googleUser.email, name: googleUser.name, passwordHash: null, avatarUrl: googleUser.picture, emailVerifiedAt: new Date(), createdAt: new Date(), updatedAt: new Date() };
     } else {
       const existingAccount = await db.query.oauthAccounts.findFirst({
-        where: eq(oauthAccounts.provider, "google"),
+        where: and(eq(oauthAccounts.userId, user.id), eq(oauthAccounts.provider, "google")),
       });
 
       if (!existingAccount) {
@@ -127,7 +127,8 @@ export async function GET(req: Request) {
 
     return response;
   } catch (error) {
-    console.error("[auth/google/callback]", error);
-    return NextResponse.redirect(`${appUrl}/auth/login?error=callback_failed`);
+    console.error("[auth/google/callback] Callback failed:", error);
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.redirect(`${appUrl}/auth/login?error=${encodeURIComponent(message.slice(0, 80))}`);
   }
 }

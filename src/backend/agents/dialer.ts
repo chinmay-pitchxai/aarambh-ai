@@ -12,7 +12,10 @@ const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
 async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string; recordingUrl?: string }> {
   const apiKey = process.env.VOBIZ_API_KEY;
   if (!apiKey) {
-    return { callId: `dev-${randomUUID().slice(0, 8)}`, status: "connected" };
+    if (process.env.ALLOW_SIMULATED_CALLS === "true") {
+      return { callId: `dev-${randomUUID().slice(0, 8)}`, status: "connected" };
+    }
+    throw new Error("Vobiz is not configured. Set VOBIZ_API_KEY or explicitly enable ALLOW_SIMULATED_CALLS for local demo data.");
   }
 
   const res = await fetch(`${VOBIZ_API}/calls`, {
@@ -100,7 +103,11 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
     const { callId, status, recordingUrl } = await dialVobiz(lead.phoneE164);
     ctx.log("dialer connected", { callId, status });
 
-    // 5. Simulate outcome
+    // Vobiz supplies the final outcome asynchronously through its webhook.
+    // A simulation is available only when explicitly enabled for local demos.
+    if (process.env.ALLOW_SIMULATED_CALLS !== "true") {
+      throw new Error("Call was submitted to Vobiz. The final outcome will be processed by its webhook.");
+    }
     const outcome = simulateOutcome(status);
     const durationSec = outcome === "no_answer" ? 0 : Math.floor(Math.random() * 300) + 30;
 
