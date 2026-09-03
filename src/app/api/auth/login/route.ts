@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { findUserByEmail, verifyPassword, createSession } from "@/backend/auth";
+import { findUserByEmail, verifyPassword, createSession, SESSION_DURATION_MS } from "@/backend/auth";
 
 export async function POST(req: Request) {
   try {
@@ -19,14 +19,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
+    const sessionId = await createSession(user.id);
+
     const response = NextResponse.json({
       user: { id: user.id, email: user.email, name: user.name },
     });
 
-    // Clear any stale session cookies before creating new one
-    response.cookies.set("session", "", { maxAge: 0, path: "/" });
-
-    await createSession(user.id);
+    // Set the session cookie on the response (single source of truth)
+    response.cookies.set("session", sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_DURATION_MS / 1000,
+    });
 
     return response;
   } catch (error) {

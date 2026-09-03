@@ -17,6 +17,10 @@ const INTEGRATIONS: Integration[] = [
   { id: "gmail", name: "Gmail", desc: "Email outreach and calendar access via Gmail", icon: "✉", category: "Email", color: "#C17C60", via: "Composio" },
   { id: "google_calendar", name: "Google Calendar", desc: "Schedule meetings and check availability", icon: "📅", category: "Meetings", color: "#4285F4", via: "Composio" },
   { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B", via: "Composio" },
+  { id: "google_maps", name: "Google Maps", desc: "Location data for lead research and targeting", icon: "📍", category: "Data", color: "#EA4335", via: "Composio" },
+  { id: "slack", name: "Slack", desc: "Team notifications and collaboration", icon: "⚡", category: "Messaging", color: "#611f69", via: "Composio" },
+  { id: "hubspot", name: "HubSpot", desc: "CRM sync for contacts and deals", icon: "⬡", category: "CRM", color: "#FF7A59", via: "Composio" },
+  { id: "notion", name: "Notion", desc: "Team workspace and documentation", icon: "▤", category: "Productivity", color: "#2D2D2D", via: "Composio" },
   { id: "vobiz", name: "Vobiz", desc: "Phone calls and voice outreach", icon: "📞", category: "Phone", color: "#6B8E7B", via: "API" },
 ];
 

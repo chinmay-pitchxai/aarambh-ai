@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createUser, findUserByEmail, createSession } from "@/backend/auth";
+import { createUser, findUserByEmail, createSession, SESSION_DURATION_MS } from "@/backend/auth";
 
 export async function POST(req: Request) {
   try {
@@ -24,12 +24,22 @@ export async function POST(req: Request) {
     }
 
     const { userId, orgId } = await createUser(email, password, name);
-    await createSession(userId);
+    const sessionId = await createSession(userId);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       user: { id: userId, email, name: name || email.split("@")[0] },
       org: { id: orgId },
     });
+
+    response.cookies.set("session", sessionId, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_DURATION_MS / 1000,
+    });
+
+    return response;
   } catch (error) {
     console.error("[auth/signup]", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
