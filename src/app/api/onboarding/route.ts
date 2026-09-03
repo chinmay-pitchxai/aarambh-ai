@@ -6,6 +6,7 @@ import { getSession } from "@/backend/auth";
 import { db, schema } from "@/backend/db";
 import { researchBusiness } from "@/backend/services/business-research";
 import { searchApolloProspects, type ApolloProspect, type IcpProfile } from "@/backend/services/apollo";
+import { autoSetupAfterOnboarding } from "@/backend/services/auto-setup";
 
 const onboardingInput = z.object({
   companyName: z.string().trim().min(2, "Business name is required").max(160),
@@ -115,11 +116,31 @@ export async function POST(request: Request) {
       return ids;
     });
 
+    // Auto-setup: generate sales prompts + build RAG after onboarding
+    let autoSetupResult = null;
+    try {
+      autoSetupResult = await autoSetupAfterOnboarding(db, session.activeOrganizationId, {
+        companyName: research.companyName,
+        website: research.website,
+        industry: research.industry,
+        description: research.description,
+        location: research.location,
+      });
+    } catch (err) {
+      console.warn("[onboarding] Auto-setup failed (non-blocking):", err);
+    }
+
     return NextResponse.json({
       success: true,
       business: { companyName: research.companyName, industry: research.industry, description: research.description, location: research.location },
       icp: research.icp,
       leadsImported: importedLeadIds.length,
+      autoSetup: autoSetupResult ? {
+        ragBuilt: autoSetupResult.ragBuilt,
+        ragChunks: autoSetupResult.ragChunks,
+        promptsGenerated: autoSetupResult.promptsGenerated,
+        icpGenerated: autoSetupResult.icpGenerated,
+      } : null,
       warning: leadDiscoveryWarning,
     });
   } catch (error) {

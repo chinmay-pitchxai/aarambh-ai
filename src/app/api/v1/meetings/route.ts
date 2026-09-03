@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from "@/backend/auth/middleware";
 import { and, eq } from "drizzle-orm";
 import { schema } from "@/backend/db";
 import { createNotificationForTenant, formatNotificationMessage } from "@/backend/services/notifications";
+import { createMeeting as createCalendarEvent, updateBookingWithCalendarEvent } from "@/backend/services/calendar-composio";
 
 // ── Meetings v1 API ──
 // GET  /api/v1/meetings            → list tenant's meetings
@@ -81,6 +82,31 @@ export async function POST(req: NextRequest) {
       await scheduleReminders(db, booking.id);
     } catch (reminderErr) {
       console.error("[api/v1/meetings] reminder scheduling failed", reminderErr);
+    }
+
+    // Create Google Calendar event via Composio
+    try {
+      const [lead] = await db
+        .select({ email: schema.leads.email, firstName: schema.leads.firstName, lastName: schema.leads.lastName })
+        .from(schema.leads)
+        .where(eq(schema.leads.id, leadId))
+        .limit(1);
+
+      const end = new Date(start.getTime() + duration * 60_000);
+      const attendees = lead?.email ? [lead.email] : [];
+      const leadName = [lead?.firstName, lead?.lastName].filter(Boolean).join(" ");
+
+      const calendarEvent = await createCalendarEvent(auth.ctx.tenantId, {
+        title: title ?? `Meeting with ${leadName || "Prospect"}`,
+        start,
+        end,
+        attendees,
+        description: notes ?? undefined,
+      });
+
+      await updateBookingWithCalendarEvent(auth.ctx.tenantId, booking.id, calendarEvent.id);
+    } catch (calErr) {
+      console.error("[api/v1/meetings] Google Calendar event creation failed (non-fatal)", calErr);
     }
 
     await db

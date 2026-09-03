@@ -1,6 +1,12 @@
 import { db } from "@/backend/db";
 import { schema } from "@/backend/db";
 import { sql, eq, and, desc } from "drizzle-orm";
+import { searchApolloProspects, type IcpProfile } from "../services/apollo";
+import { researchCompany } from "../services/company-research";
+import { generateICP as genICP, toIcpProfile } from "../services/icp-generation";
+import { randomUUID } from "crypto";
+
+const VOBIZ_API = process.env.VOBIZ_API_URL || "https://api.vobiz.in/v1";
 
 // ── Lead Statistics ──
 export async function getLeadStats(tenantId: string) {
@@ -104,7 +110,6 @@ export async function getCallStats(tenantId: string) {
 // ── Meeting Statistics ──
 export async function getMeetingStats(tenantId: string) {
   const today = new Date().toISOString().split("T")[0];
-  const now = new Date().toISOString();
 
   const todayKpi = await db
     .select()
@@ -236,4 +241,500 @@ export async function getLeadDetails(tenantId: string, leadId: string) {
     .limit(5);
 
   return { ...lead[0], recentCalls: calls };
+}
+
+// ── Search Apollo Leads ──
+export async function searchApolloLeads(
+  tenantId: string,
+  query: string,
+  location?: string,
+  title?: string,
+) {
+  const icp: IcpProfile = {
+    industries: [],
+    personTitles: title ? [title] : [],
+    seniorities: ["owner", "founder", "c_suite", "vp", "head", "director"],
+    employeeRanges: ["11,50", "51,200", "201,500"],
+    locations: location ? [location] : [],
+    keywords: query ? query.split(/\s+/).filter(Boolean) : [],
+  };
+
+  const prospects = await searchApolloProspects(icp, 10);
+
+  // Store leads in DB
+  const storedLeads: Array<{ id: string; firstName: string | null; lastName: string | null; company: string | null; title: string | null; email: string | null; phone: string | null }> = [];
+
+  for (const prospect of prospects) {
+    const leadId = randomUUID();
+    const existing = prospect.phone
+      ? await db.select().from(schema.leads).where(eq(schema.leads.phoneE164, prospect.phone)).limit(1)
+      : [];
+
+    if (existing.length === 0) {
+      await db.insert(schema.leads).values({
+        id: leadId,
+        phoneE164: prospect.phone,
+        email: prospect.email,
+        firstName: prospect.firstName,
+        lastName: prospect.lastName,
+        company: prospect.company,
+        title: prospect.title,
+        city: prospect.city,
+        industry: prospect.industry,
+        companySize: prospect.companySize,
+        sourceRef: prospect.id,
+        sourceCost: 100,
+        rawData: prospect.raw,
+        freshness: new Date(),
+      });
+
+      await db.insert(schema.clientLeads).values({
+        id: randomUUID(),
+        clientId: tenantId,
+        leadId,
+        score: 50,
+        band: "warm",
+        status: "new",
+      });
+
+      storedLeads.push({
+        id: leadId,
+        firstName: prospect.firstName,
+        lastName: prospect.lastName,
+        company: prospect.company,
+        title: prospect.title,
+        email: prospect.email,
+        phone: prospect.phone,
+      });
+    }
+  }
+
+  return {
+    searched: query,
+    totalFound: prospects.length,
+    totalNew: storedLeads.length,
+    leads: storedLeads,
+  };
+}
+
+// ── Generate Leads from ICP ──
+export async function generateLeadsFromICPAction(
+  tenantId: string,
+  icp: IcpProfile,
+  batchSize = 10,
+) {
+  const prospects = await searchApolloProspects(icp, batchSize);
+  const leadIds: string[] = [];
+  let totalNew = 0;
+
+  for (const prospect of prospects) {
+    const leadId = randomUUID();
+    const phone = prospect.phone;
+
+    const existing = phone
+      ? await db.select().from(schema.leads).where(eq(schema.leads.phoneE164, phone)).limit(1)
+      : [];
+
+    if (existing.length > 0) continue;
+
+    if (prospect.email) {
+      const emailMatch = await db.select().from(schema.leads).where(eq(schema.leads.email, prospect.email)).limit(1);
+      if (emailMatch.length > 0) continue;
+    }
+
+    await db.insert(schema.leads).values({
+      id: leadId,
+      phoneE164: phone,
+      email: prospect.email,
+      firstName: prospect.firstName,
+      lastName: prospect.lastName,
+      company: prospect.company,
+      title: prospect.title,
+      city: prospect.city,
+      industry: prospect.industry,
+      companySize: prospect.companySize,
+      sourceRef: prospect.id,
+      sourceCost: 100,
+      rawData: prospect.raw,
+      freshness: new Date(),
+    });
+
+    await db.insert(schema.clientLeads).values({
+      id: randomUUID(),
+      clientId: tenantId,
+      leadId,
+      score: 50,
+      band: "warm",
+      status: "new",
+    });
+
+    leadIds.push(leadId);
+    totalNew++;
+  }
+
+  return { totalFound: prospects.length, totalNew, leadIds };
+}
+
+// ── Initiate Voice Call ──
+export async function initiateCall(
+  tenantId: string,
+  leadId: string,
+  phoneNumber?: string,
+) {
+  // Fetch lead to get phone number
+  const [lead] = await db
+    .select()
+    .from(schema.leads)
+    .where(eq(schema.leads.id, leadId))
+    .limit(1);
+
+  if (!lead && !phoneNumber) {
+    return { success: false, error: "Lead not found and no phone number provided" };
+  }
+
+  const phone = phoneNumber || lead?.phoneE164;
+  if (!phone) {
+    return { success: false, error: "No phone number available for this lead" };
+  }
+
+  const apiKey = process.env.VOBIZ_API_KEY;
+  let callId: string;
+  let status: string;
+
+  if (!apiKey) {
+    callId = `dev-${randomUUID().slice(0, 8)}`;
+    status = "connected";
+  } else {
+    const res = await fetch(`${VOBIZ_API}/calls`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        to: phone,
+        from: process.env.VOBIZ_FROM_NUMBER,
+        webhook: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/vobiz`,
+        record: true,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      return { success: false, error: `Vobiz dial failed: ${res.status} ${errBody}` };
+    }
+
+    const data = await res.json();
+    callId = data.call_id;
+    status = data.status;
+  }
+
+  // Store call record
+  const callIdDb = randomUUID();
+  await db.insert(schema.calls).values({
+    id: callIdDb,
+    leadId: lead?.id || leadId,
+    clientId: tenantId,
+    vobizCallId: callId,
+    outcome: "no_answer",
+    durationSec: 0,
+    pitchUsed: "Manual call initiation from dashboard",
+    startedAt: new Date(),
+    endedAt: new Date(),
+  });
+
+  return {
+    success: true,
+    callId: callIdDb,
+    vobizCallId: callId,
+    status,
+    leadName: lead ? `${lead.firstName || ""} ${lead.lastName || ""}`.trim() : "Unknown",
+    phone,
+  };
+}
+
+// ── Send WhatsApp Message ──
+export async function sendWhatsApp(
+  tenantId: string,
+  leadId: string,
+  message: string,
+) {
+  const [lead] = await db
+    .select()
+    .from(schema.leads)
+    .where(eq(schema.leads.id, leadId))
+    .limit(1);
+
+  if (!lead) return { success: false, error: "Lead not found" };
+  if (!lead.phoneE164) return { success: false, error: "No phone number for this lead" };
+
+  const WA_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+  const WA_TOKEN = process.env.WHATSAPP_API_TOKEN;
+  let waMessageId: string | null = null;
+
+  if (WA_PHONE_ID && WA_TOKEN) {
+    const res = await fetch(`https://graph.facebook.com/v19.0/${WA_PHONE_ID}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${WA_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: lead.phoneE164,
+        type: "text",
+        text: { body: message },
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      return { success: false, error: `WhatsApp send failed: ${res.status} ${errBody}` };
+    }
+
+    const data = await res.json();
+    waMessageId = data.messages?.[0]?.id || null;
+  } else {
+    waMessageId = `wa-stub-${randomUUID().slice(0, 8)}`;
+  }
+
+  // Store message
+  await db.insert(schema.messages).values({
+    id: randomUUID(),
+    leadId,
+    clientId: tenantId,
+    channel: "whatsapp",
+    direction: "outbound",
+    body: message,
+    waMessageId,
+  });
+
+  return {
+    success: true,
+    waMessageId,
+    leadName: `${lead.firstName || ""} ${lead.lastName || ""}`.trim(),
+    phone: lead.phoneE164,
+  };
+}
+
+// ── Send Email ──
+export async function sendEmail(
+  tenantId: string,
+  leadId: string,
+  subject: string,
+  body: string,
+) {
+  const [lead] = await db
+    .select()
+    .from(schema.leads)
+    .where(eq(schema.leads.id, leadId))
+    .limit(1);
+
+  if (!lead) return { success: false, error: "Lead not found" };
+  if (!lead.email) return { success: false, error: "No email address for this lead" };
+
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  let gmailThreadId: string | null = null;
+
+  if (clientId && clientSecret && refreshToken) {
+    // Refresh token
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: "refresh_token",
+      }),
+    });
+
+    if (tokenRes.ok) {
+      const tokenData = await tokenRes.json();
+      const accessToken = tokenData.access_token;
+
+      const mimeMessage = [
+        `To: ${lead.email}`,
+        `Subject: ${subject}`,
+        "MIME-Version: 1.0",
+        'Content-Type: text/html; charset="UTF-8"',
+        "",
+        body,
+      ].join("\r\n");
+
+      const encodedMessage = Buffer.from(mimeMessage)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+
+      const sendRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ raw: encodedMessage }),
+      });
+
+      if (sendRes.ok) {
+        const sendData = await sendRes.json();
+        gmailThreadId = sendData.id || null;
+      }
+    }
+  } else {
+    gmailThreadId = `gmail-stub-${randomUUID().slice(0, 8)}`;
+  }
+
+  // Store message
+  await db.insert(schema.messages).values({
+    id: randomUUID(),
+    leadId,
+    clientId: tenantId,
+    channel: "gmail",
+    direction: "outbound",
+    body: `${subject}\n\n${body}`,
+    gmailThreadId,
+  });
+
+  return {
+    success: true,
+    gmailThreadId,
+    leadName: `${lead.firstName || ""} ${lead.lastName || ""}`.trim(),
+    email: lead.email,
+  };
+}
+
+// ── Book Meeting ──
+export async function bookMeeting(
+  tenantId: string,
+  leadId: string,
+  dateTime: string,
+) {
+  const [lead] = await db
+    .select()
+    .from(schema.leads)
+    .where(eq(schema.leads.id, leadId))
+    .limit(1);
+
+  if (!lead) return { success: false, error: "Lead not found" };
+
+  const scheduledAt = new Date(dateTime);
+  if (isNaN(scheduledAt.getTime())) {
+    return { success: false, error: "Invalid date/time format" };
+  }
+
+  const bookingId = `bk_${randomUUID().slice(0, 12)}`;
+  await db.insert(schema.bookings).values({
+    id: bookingId,
+    leadId,
+    clientId: tenantId,
+    scheduledAt,
+    durationMin: 30,
+    status: "scheduled",
+    notes: `Booked via dashboard chat`,
+  });
+
+  // Update lead status
+  await db
+    .update(schema.clientLeads)
+    .set({ status: "booked" })
+    .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, tenantId)));
+
+  // Send WhatsApp confirmation if possible
+  if (lead.phoneE164) {
+    try {
+      await sendWhatsApp(tenantId, leadId, `Hi ${lead.firstName || "there"}, your meeting is confirmed for ${scheduledAt.toLocaleString()}. We look forward to speaking with you!`);
+    } catch {
+      // WhatsApp send is best-effort
+    }
+  }
+
+  return {
+    success: true,
+    bookingId,
+    leadName: `${lead.firstName || ""} ${lead.lastName || ""}`.trim(),
+    scheduledAt: scheduledAt.toISOString(),
+    durationMin: 30,
+  };
+}
+
+// ── Analyze Company ──
+export async function analyzeCompany(tenantId: string, website: string) {
+  const normalizedWebsite = /^https?:\/\//i.test(website.trim()) ? website.trim() : `https://${website.trim()}`;
+  const url = new URL(normalizedWebsite);
+  const companyName = url.hostname.replace(/^www\./, "").split(".")[0];
+  const displayName = companyName.charAt(0).toUpperCase() + companyName.slice(1);
+
+  const result = await researchCompany(displayName, normalizedWebsite);
+
+  return {
+    companyName: result.companyName,
+    website: result.website,
+    description: result.description,
+    category: result.category,
+    industry: result.industry,
+    products: result.products,
+    services: result.services,
+    targetMarket: result.targetMarket,
+    confidenceScore: result.confidenceScore,
+  };
+}
+
+// ── Generate ICP ──
+export async function generateICPFromProfile(
+  tenantId: string,
+  profile: {
+    companyName: string;
+    website: string;
+    industry: string;
+    description: string;
+    location: string;
+  },
+) {
+  const icp = await genICP(db, tenantId, {
+    companyName: profile.companyName,
+    website: profile.website,
+    industry: profile.industry,
+    description: profile.description,
+    location: profile.location,
+  });
+
+  return {
+    target_industries: icp.target_industries,
+    target_titles: icp.target_titles,
+    target_seniorities: icp.target_seniorities,
+    target_company_sizes: icp.target_company_sizes,
+    target_locations: icp.target_locations,
+    keywords: icp.keywords,
+  };
+}
+
+// ── Update Lead Status ──
+export async function updateLeadStatus(
+  tenantId: string,
+  leadId: string,
+  status: string,
+) {
+  const validStatuses = ["new", "contacted", "qualified", "converted", "booked", "parked", "dnc", "lost"];
+  if (!validStatuses.includes(status)) {
+    return { success: false, error: `Invalid status. Must be one of: ${validStatuses.join(", ")}` };
+  }
+
+  const [existing] = await db
+    .select()
+    .from(schema.clientLeads)
+    .where(and(eq(schema.clientLeads.clientId, tenantId), eq(schema.clientLeads.id, leadId)))
+    .limit(1);
+
+  if (!existing) return { success: false, error: "Lead not found in your pipeline" };
+
+  await db
+    .update(schema.clientLeads)
+    .set({ status: status as typeof schema.clientLeads.status.enumValues[number] })
+    .where(and(eq(schema.clientLeads.clientId, tenantId), eq(schema.clientLeads.id, leadId)));
+
+  return { success: true, leadId, previousStatus: existing.status, newStatus: status };
 }

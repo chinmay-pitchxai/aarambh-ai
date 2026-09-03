@@ -25,8 +25,10 @@ export interface SalesPromptTemplate {
   promptType: string;
   promptVersion: number;
   systemPrompt: string;
+  openingPrompt: string;
   behaviorPrompt: string;
   qualificationPrompt: string;
+  pitchPrompt: string;
   objectionPrompt: string;
   closingPrompt: string;
   status: string;
@@ -35,8 +37,10 @@ export interface SalesPromptTemplate {
 
 interface GeneratedPrompts {
   system_prompt: string;
+  opening_prompt: string;
   behavior_prompt: string;
   qualification_prompt: string;
+  pitch_prompt: string;
   objection_prompt: string;
   closing_prompt: string;
 }
@@ -47,6 +51,15 @@ function fallbackPrompts(profile: CompanyProfileForPrompts, icp: GeneratedICP): 
 
   return {
     system_prompt: `You are an AI sales development representative for ${profile.companyName}, a company in the ${profile.industry} industry based in ${profile.location}. ${profile.description} You are reaching out to potential customers in ${industries} targeting roles like ${titles}. Your goal is to book qualified meetings. Be professional, concise, and focus on value rather than features.`,
+
+    opening_prompt: `Opening Strategy for ${profile.companyName}:
+- First-touch messages must be under 50 words and reference something specific about the lead (their role, company, recent news, or LinkedIn activity)
+- Never start with "I hope this email finds you well" or generic greetings
+- Use the lead's first name and their company name in the first sentence
+- Open with a relevant observation or insight, not a pitch
+- Example patterns: "Noticed ${profile.companyName} serves [their industry] — we help similar companies [specific outcome]." or "Saw your work at [their company] — curious how you're handling [relevant challenge]."
+- For WhatsApp: keep it under 30 words, conversational tone, no formal greetings
+- For email: subject line under 8 words, reference mutual connection or shared context if available`,
 
     behavior_prompt: `Sales Behavior Guidelines for ${profile.companyName}:
 - Always personalize opening based on the lead's role and company
@@ -70,6 +83,16 @@ Qualification questions:
 - "What's the biggest challenge you're facing right now with [relevant area]?"
 - "When are you looking to have a solution in place?"
 Score leads 1-4 on each BANT dimension. Only pursue leads scoring 12+ overall.`,
+
+    pitch_prompt: `Pitch Strategy for ${profile.companyName}:
+- Lead with the outcome, not the product: "We help [target persona] achieve [specific result] in [timeframe]"
+- Anchor pitch to the lead's identified pain point from qualification
+- Use social proof: reference similar companies in their industry or size range
+- Keep the pitch to 3 sentences max: problem → solution → proof
+- Quantify value wherever possible (% improvement, time saved, revenue gained)
+- For ${profile.industry}: emphasize [relevant industry metric] as the primary value driver
+- Never lead with pricing — let the lead ask about cost
+- If they ask about competitors, pivot to differentiation: "What makes us different is [specific differentiator]"`,
 
     objection_prompt: `Common Objections and Responses for ${profile.companyName}:
 1. "We're already using [competitor]" → "That's great you have a solution in place. Many of our customers switched because [specific differentiator]. Would you be open to a 15-minute comparison?"
@@ -145,8 +168,10 @@ ${JSON.stringify(context)}
 Return STRICT JSON with this exact schema:
 {
   "system_prompt": "A detailed system prompt (200-400 words) that defines the AI sales rep's identity, role, and core mandate. Include company-specific context, industry expertise framing, and the primary objective of outreach.",
+  "opening_prompt": "Detailed opening strategy (150-250 words) covering first-touch message templates for WhatsApp, email, and phone. Include personalization tactics, subject line formulas, and channel-specific etiquette. Must reference the company's specific value propositions.",
   "behavior_prompt": "Detailed behavioral guidelines (200-300 words) covering tone, messaging rules, personalization approach, follow-up strategy, and channel-specific etiquette (WhatsApp, email, phone). Must reference the company's specific value propositions.",
   "qualification_prompt": "A customized BANT qualification framework (200-300 words) with industry-specific discovery questions. Include scoring criteria relevant to THIS company's sales cycle and buyer persona.",
+  "pitch_prompt": "A pitch strategy (150-250 words) with specific talking points, value propositions, social proof angles, and competitive positioning for THIS company's products/services. Include differentiator language and ROI framing.",
   "objection_prompt": "The 5 most likely objections for THIS company's product/industry, each with a specific, non-generic response strategy. Include competitor-specific objection handling based on the company's competitive landscape.",
   "closing_prompt": "A meeting booking protocol (150-250 words) customized to the company's typical deal size, sales cycle length, and buyer persona. Include specific CTAs and scheduling language."
 }
@@ -174,8 +199,10 @@ Rules:
           const parsed = JSON.parse(stripFence(raw));
           prompts = {
             system_prompt: typeof parsed.system_prompt === "string" && parsed.system_prompt.length > 50 ? parsed.system_prompt : fallback.system_prompt,
+            opening_prompt: typeof parsed.opening_prompt === "string" && parsed.opening_prompt.length > 50 ? parsed.opening_prompt : fallback.opening_prompt,
             behavior_prompt: typeof parsed.behavior_prompt === "string" && parsed.behavior_prompt.length > 50 ? parsed.behavior_prompt : fallback.behavior_prompt,
             qualification_prompt: typeof parsed.qualification_prompt === "string" && parsed.qualification_prompt.length > 50 ? parsed.qualification_prompt : fallback.qualification_prompt,
+            pitch_prompt: typeof parsed.pitch_prompt === "string" && parsed.pitch_prompt.length > 50 ? parsed.pitch_prompt : fallback.pitch_prompt,
             objection_prompt: typeof parsed.objection_prompt === "string" && parsed.objection_prompt.length > 50 ? parsed.objection_prompt : fallback.objection_prompt,
             closing_prompt: typeof parsed.closing_prompt === "string" && parsed.closing_prompt.length > 50 ? parsed.closing_prompt : fallback.closing_prompt,
           };
@@ -231,8 +258,10 @@ async function storePromptTemplate(
     promptType: "master",
     promptVersion: nextVersion,
     systemPrompt: prompts.system_prompt,
+    openingPrompt: prompts.opening_prompt,
     behaviorPrompt: prompts.behavior_prompt,
     qualificationPrompt: prompts.qualification_prompt,
+    pitchPrompt: prompts.pitch_prompt,
     objectionPrompt: prompts.objection_prompt,
     closingPrompt: prompts.closing_prompt,
     status: "active",
@@ -247,8 +276,10 @@ async function storePromptTemplate(
     promptType: "master",
     promptVersion: nextVersion,
     systemPrompt: prompts.system_prompt,
+    openingPrompt: prompts.opening_prompt,
     behaviorPrompt: prompts.behavior_prompt,
     qualificationPrompt: prompts.qualification_prompt,
+    pitchPrompt: prompts.pitch_prompt,
     objectionPrompt: prompts.objection_prompt,
     closingPrompt: prompts.closing_prompt,
     status: "active",
@@ -279,8 +310,10 @@ export async function getActivePromptTemplate(
     promptType: template.promptType ?? "master",
     promptVersion: template.promptVersion ?? 1,
     systemPrompt: template.systemPrompt ?? "",
+    openingPrompt: template.openingPrompt ?? "",
     behaviorPrompt: template.behaviorPrompt ?? "",
     qualificationPrompt: template.qualificationPrompt ?? "",
+    pitchPrompt: template.pitchPrompt ?? "",
     objectionPrompt: template.objectionPrompt ?? "",
     closingPrompt: template.closingPrompt ?? "",
     status: template.status ?? "draft",

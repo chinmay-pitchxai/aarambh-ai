@@ -13,6 +13,7 @@ interface Integration {
 
 const INTEGRATIONS: Integration[] = [
   { id: "gmail", name: "Gmail", desc: "Email outreach + calendar access", icon: "✉", category: "Email", color: "#C17C60" },
+  { id: "google_calendar", name: "Google Calendar", desc: "Schedule meetings and check availability", icon: "📅", category: "Meetings", color: "#4285F4" },
   { id: "whatsapp", name: "WhatsApp", desc: "Send messages and nurture leads", icon: "◈", category: "Messaging", color: "#7A9A7E" },
   { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B" },
   { id: "zoom", name: "Zoom", desc: "Schedule and host video calls", icon: "◎", category: "Meetings", color: "#4A8BC2" },

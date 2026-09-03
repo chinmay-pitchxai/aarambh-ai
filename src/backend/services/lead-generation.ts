@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
+import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { type IcpProfile, searchApolloProspects, type ApolloProspect } from "./apollo";
-import { db, schema } from "../db";
-import { eq, and, sql } from "drizzle-orm";
+import * as schema from "../db/schema";
+import { eq } from "drizzle-orm";
 
 // ── Lead Generation Pipeline ──
 // ICP → Apollo search → normalize → dedupe → score → store
@@ -94,7 +95,7 @@ export function scoreLead(lead: ReturnType<typeof normalizeApolloLead>, icp: Icp
 // ── Generate leads from ICP ──
 
 export async function generateLeadsFromICP(
-  db: typeof import("../db").db,
+  db: PostgresJsDatabase<typeof schema>,
   tenantId: string,
   icp: IcpProfile,
   batchSize = 20,
@@ -169,7 +170,7 @@ export async function generateLeadsFromICP(
 // ── Generate exactly N sample leads for confirmation ──
 
 export async function generateSampleLeads(
-  db: typeof import("../db").db,
+  db: PostgresJsDatabase<typeof schema>,
   tenantId: string,
   icp: IcpProfile,
   count = 3,

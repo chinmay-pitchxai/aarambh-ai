@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import * as schema from "@/backend/db/schema";
 import { appendOutboxEvent } from "@/backend/events/outbox";
+import { autoOnboard, type AutoOnboardResult } from "@/backend/services/auto-onboard";
+import { autoSetupAfterOnboarding, type AutoSetupResult } from "@/backend/services/auto-setup";
 import {
   companyOnboardingInputSchema,
   createCompanyOnboardingGraph,
@@ -500,6 +502,7 @@ export interface OnboardingConfirmResult {
   status: OnboardingStatus;
   decision: CompanyOnboardingStateType["decision"];
   profile: CompanyProfileDraft;
+  autoSetup: AutoSetupResult | null;
 }
 
 /**
@@ -589,7 +592,104 @@ export async function confirmProfile(
     payload: event,
   });
 
-  return { runId: run.id, threadId, status: state.currentStatus, decision: state.decision, profile: draft };
+  // Auto-setup: generate sales prompts, build RAG, generate ICP
+  let autoSetupResult: AutoSetupResult | null = null;
+  try {
+    autoSetupResult = await autoSetupAfterOnboarding(db, ctx.tenantId, {
+      companyName: draft.companyName,
+      website: draft.website,
+      industry: profile?.industry ?? "General",
+      description: profile?.description ?? "",
+      location: draft.location,
+      products: Array.isArray(profileData.products) ? profileData.products as string[] : undefined,
+      targetMarket: typeof profileData.targetMarket === "string" ? profileData.targetMarket : undefined,
+    });
+    console.log(`[onboarding] Auto-setup completed for ${draft.companyName}: RAG=${autoSetupResult.ragBuilt}, Prompts=${autoSetupResult.promptsGenerated}, ICP=${autoSetupResult.icpGenerated}`);
+  } catch (err) {
+    console.warn("[onboarding] Auto-setup failed (non-blocking):", err);
+  }
+
+  return { runId: run.id, threadId, status: state.currentStatus, decision: state.decision, profile: draft, autoSetup: autoSetupResult };
+}
+
+// ── Simplified auto-onboarding (one-shot: research → ICP → sample leads) ──
+
+export interface AutoOnboardStartResult {
+  companyProfile: {
+    companyName: string;
+    website: string;
+    description: string;
+    industry: string;
+    products: string[];
+    services: string[];
+    targetMarket: string;
+    confidenceScore: number;
+  };
+  icp: {
+    target_industries: string[];
+    target_titles: string[];
+    target_seniorities: string[];
+    target_company_sizes: string[];
+    target_locations: string[];
+    keywords: string[];
+  };
+  sampleLeads: {
+    totalSearched: number;
+    totalFound: number;
+    totalNew: number;
+    totalDuplicate: number;
+    leadIds: string[];
+  };
+  leadSearch: {
+    totalSearched: number;
+    totalFound: number;
+    totalNew: number;
+    totalDuplicate: number;
+    leadIds: string[];
+  };
+}
+
+/**
+ * Simplified onboarding: takes company name + website, runs full pipeline
+ * (research → ICP → Apollo lead search → 3 sample leads), stores everything,
+ * and returns results for confirmation.
+ */
+export async function autoOnboardCompany(
+  db: Database,
+  ctx: OnboardingContext,
+  input: OnboardingSubmitInput,
+): Promise<AutoOnboardStartResult> {
+  const parsed = onboardingSubmitSchema.parse(input);
+
+  const result = await autoOnboard(db, {
+    tenantId: ctx.tenantId,
+    companyName: parsed.companyName,
+    website: parsed.website,
+    location: parsed.location,
+  });
+
+  return {
+    companyProfile: {
+      companyName: result.companyProfile.companyName,
+      website: result.companyProfile.website,
+      description: result.companyProfile.description,
+      industry: result.companyProfile.industry,
+      products: result.companyProfile.products,
+      services: result.companyProfile.services,
+      targetMarket: result.companyProfile.targetMarket,
+      confidenceScore: result.companyProfile.confidenceScore,
+    },
+    icp: {
+      target_industries: result.icp.target_industries,
+      target_titles: result.icp.target_titles,
+      target_seniorities: result.icp.target_seniorities,
+      target_company_sizes: result.icp.target_company_sizes,
+      target_locations: result.icp.target_locations,
+      keywords: result.icp.keywords,
+    },
+    sampleLeads: result.sampleLeads,
+    leadSearch: result.leadSearch,
+  };
 }
 
 export interface OnboardingRunListItem {

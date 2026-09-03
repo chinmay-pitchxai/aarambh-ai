@@ -286,8 +286,10 @@ export const promptTemplates = pgTable("prompt_templates", {
   promptType: text("prompt_type").notNull(),   // "master" | "discovery" | "qualification" | "objection" | "closing"
   promptVersion: integer("prompt_version").default(1),
   systemPrompt: text("system_prompt"),
+  openingPrompt: text("opening_prompt"),
   behaviorPrompt: text("behavior_prompt"),
   qualificationPrompt: text("qualification_prompt"),
+  pitchPrompt: text("pitch_prompt"),
   objectionPrompt: text("objection_prompt"),
   closingPrompt: text("closing_prompt"),
   status: text("status").default("draft"),    // "draft" | "active" | "archived"

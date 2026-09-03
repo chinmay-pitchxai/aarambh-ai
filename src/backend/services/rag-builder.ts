@@ -238,3 +238,38 @@ export function getRAGContext(ragData: RAGData, query: string, topK = 3): string
     .map((chunk) => `[Source: ${chunk.url} | ${chunk.title}]\n${chunk.content}`)
     .join("\n\n---\n\n");
 }
+
+export async function getRAGDataForTenant(
+  db: PostgresJsDatabase<typeof schema>,
+  tenantId: string,
+): Promise<RAGData | null> {
+  const profile = await db.query.businessProfiles.findFirst({
+    where: eq(schema.businessProfiles.organizationId, tenantId),
+  });
+  if (!profile?.ragData || typeof profile.ragData !== "object") return null;
+  const data = profile.ragData as Record<string, unknown>;
+  if (!Array.isArray(data.chunks)) return null;
+  return data as unknown as RAGData;
+}
+
+export async function searchRAGByTenant(
+  db: PostgresJsDatabase<typeof schema>,
+  tenantId: string,
+  query: string,
+  topK = 5,
+): Promise<RAGChunk[]> {
+  const ragData = await getRAGDataForTenant(db, tenantId);
+  if (!ragData) return [];
+  return searchRAG(ragData, query, topK);
+}
+
+export async function getRAGContextByTenant(
+  db: PostgresJsDatabase<typeof schema>,
+  tenantId: string,
+  query: string,
+  topK = 3,
+): Promise<string> {
+  const ragData = await getRAGDataForTenant(db, tenantId);
+  if (!ragData) return "";
+  return getRAGContext(ragData, query, topK);
+}

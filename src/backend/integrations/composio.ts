@@ -18,6 +18,7 @@ const SLUG_MAP: Record<string, string> = {
   gmail: "gmail",
   whatsapp: "whatsapp",
   google_maps: "google_maps",
+  google_calendar: "googlecalendar",
   slack: "slack",
   hubspot: "hubspot",
   notion: "notion",
@@ -28,7 +29,7 @@ let authConfigMapLoaded = false;
 export class ComposioService {
   private composio: Composio | null = null;
 
-  private getClient(): Composio {
+  getClient(): Composio {
     if (!this.composio) {
       const apiKey = process.env.COMPOSIO_API_KEY;
       if (!apiKey) {

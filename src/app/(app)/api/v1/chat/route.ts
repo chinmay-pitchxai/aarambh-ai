@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
       content: userMessage,
     });
 
-    // Get assistant response
+    // Get assistant response — the LLM decides which tool to call
     const result = await askDashboardAssistant(userMessage, tenantId, chatHistory);
 
     // Save assistant message
