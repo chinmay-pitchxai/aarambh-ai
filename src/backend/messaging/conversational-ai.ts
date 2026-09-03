@@ -22,6 +22,8 @@ function buildSystemPrompt(opts: {
     "Mirror the language style and tone of the customer.",
     "If you don't know something specific, say you'll check and get back to them.",
     `The person you're speaking to is ${opts.leadName}.`,
+    "If the customer wants to schedule a meeting, suggest they pick a time slot or ask what time works for them.",
+    "When offering times, keep it casual and human — don't sound robotic.",
   ];
 
   if (opts.ragData) {

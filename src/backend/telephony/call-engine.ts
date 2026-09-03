@@ -3,7 +3,7 @@ import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import type { DurableQueue } from "../queue/durable-queue";
 import { isDnc, isInCallingWindow, canInitiateCall } from "./suppression";
-import { routeOutcome as routeOutcomeInternal, type CallOutcome } from "../agents/outcome-router";
+import type { CallOutcome } from "../agents/outcome-router";
 
 // ── Call Engine ──
 // Orchestrates call initiation, webhook event processing, and outcome routing.
@@ -189,25 +189,8 @@ export async function routeOutcome(
     .set({ outcome })
     .where(eq(schema.calls.id, call.id));
 
-  const statusMap: Record<string, string> = {
-    booked: "qualified",
-    not_interested: "parked",
-    picked_no_response: "contacted",
-  };
-
-  await db
-    .update(schema.clientLeads)
-    .set({
-      status: (statusMap[outcome] || "contacted") as typeof schema.clientLeads.status.enumValues[number],
-      lastCallAt: new Date(),
-    })
-    .where(
-      and(
-        eq(schema.clientLeads.leadId, call.leadId),
-        eq(schema.clientLeads.clientId, resolvedClientId),
-      ),
-    );
-
+  // Enqueue outcome processing — the outcome worker invokes the full
+  // outcome router (WhatsApp sends, retries, booking, lead status updates).
   await queue.enqueue("call-outcome", {
     leadId: call.leadId,
     clientId: resolvedClientId,

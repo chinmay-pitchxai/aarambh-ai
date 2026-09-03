@@ -3,8 +3,9 @@ import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { getVobizClient, type TranscriptTurn } from "../integrations/vobiz";
 import { serverConfig } from "../config";
-import { getActivePromptTemplate, type CompanyProfileForPrompts } from "../services/sales-prompt-generator";
-import { buildSystemPrompt, type CompanyProfile, type LeadProfile } from "./system-prompt-builder";
+import { getActivePromptTemplate } from "../services/sales-prompt-generator";
+import { getLatestMemory, saveLeadMemory } from "../services/lead-memory";
+import { buildSystemPrompt, type CompanyProfile, type LeadProfile, type LeadMemoryContext } from "./system-prompt-builder";
 import { createGeminiLiveSession, type GeminiLiveSession } from "./gemini-live";
 import type { DurableQueue } from "../queue/durable-queue";
 
@@ -77,10 +78,23 @@ export async function initiateVoiceCall(
     valueProposition: (bizProfile?.profileData as any)?.valueProposition ?? "",
   };
 
-  // 3. Load sales prompt template
+  // 3. Load lead memory (previous interaction context)
+  const latestMemory = await getLatestMemory(tenantId, leadId);
+
+  const leadMemory: LeadMemoryContext | null = latestMemory
+    ? {
+        previousSummary: latestMemory.summary,
+        previousBant: latestMemory.bant,
+        previousSentiment: latestMemory.sentiment,
+        previousNextAction: latestMemory.nextAction,
+        previousCallContext: latestMemory.previousCallContext,
+      }
+    : null;
+
+  // 4. Load sales prompt template
   const salesPrompt = await getActivePromptTemplate(db, tenantId);
 
-  // 4. Build system instruction
+  // 5. Build system instruction
   const systemInstruction = buildSystemPrompt(
     companyProfile,
     leadProfile,
@@ -90,9 +104,10 @@ export async function initiateVoiceCall(
       gender: "female",
       voiceLanguage: serverConfig.voice.language,
     },
+    leadMemory,
   );
 
-  // 5. Create Gemini Live session
+  // 6. Create Gemini Live session
   const transcript: TranscriptTurn[] = [];
   let callEnded = false;
   let durationMs = 0;
@@ -121,7 +136,7 @@ export async function initiateVoiceCall(
     },
   );
 
-  // 6. Initiate call via Vobiz
+  // 7. Initiate call via Vobiz
   const vobizClient = getVobizClient();
   const webhookUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
 
@@ -135,7 +150,7 @@ export async function initiateVoiceCall(
   const callId = randomUUID();
   const vobizCallId = callResult.callId;
 
-  // 7. Store call record
+  // 8. Store call record
   await db.insert(schema.calls).values({
     id: callId,
     leadId,
@@ -146,14 +161,14 @@ export async function initiateVoiceCall(
     pitchUsed: systemInstruction.slice(0, 500),
   });
 
-  // 8. Trigger greeting (outbound call — AI speaks first)
+  // 9. Trigger greeting (outbound call — AI speaks first)
   setTimeout(() => {
     if (!geminiSession.isClosed) {
       geminiSession.triggerGreeting();
     }
   }, 2000);
 
-  // 9. Poll call status and bridge audio
+  // 10. Poll call status and bridge audio
   // In production, Vobiz would stream audio via WebSocket to Gemini.
   // For now we poll status until call ends.
   try {
@@ -180,7 +195,30 @@ export async function initiateVoiceCall(
   const nextSteps = extractNextSteps(transcript, outcome);
   const sentiment = analyzeSentiment(transcript);
 
-  // 12. Update call record with final data
+  // 12. Save lead memory for future call context
+  const extractedBant = extractBantFromTranscript(transcript);
+  const nextAction = determineNextAction(outcome);
+
+  await saveLeadMemory({
+    tenantId,
+    leadId,
+    callId,
+    summary,
+    sentiment,
+    bant: extractedBant,
+    nextAction,
+    scheduledCallbackAt: nextAction === "retry" ? getNextRetryTime(attemptNumber) : undefined,
+    previousCallContext: {
+      outcome,
+      attemptNumber,
+      durationSec,
+      leadName: [lead.firstName, lead.lastName].filter(Boolean).join(" "),
+      leadPhone: lead.phoneE164,
+    },
+    tags: [outcome, `attempt-${attemptNumber}`],
+  });
+
+  // 13. Update call record with final data
   await db
     .update(schema.calls)
     .set({
@@ -194,7 +232,7 @@ export async function initiateVoiceCall(
     })
     .where(eq(schema.calls.id, callId));
 
-  // 13. Update client lead status
+  // 14. Update client lead status
   await db
     .update(schema.clientLeads)
     .set({
@@ -208,7 +246,7 @@ export async function initiateVoiceCall(
       ),
     );
 
-  // 14. Enqueue outcome processing
+  // 15. Enqueue outcome processing
   await queue.enqueue("call-outcome", {
     leadId,
     clientId: tenantId,
@@ -386,6 +424,91 @@ async function pollCallUntilEnded(
     }
     await sleep(pollIntervalMs);
   }
+}
+
+function extractBantFromTranscript(
+  transcript: TranscriptTurn[],
+): { budget?: string; authority?: string; need?: string; timeline?: string } | undefined {
+  const allText = transcript
+    .filter((t) => t.role === "user")
+    .map((t) => t.text)
+    .join(" ")
+    .toLowerCase();
+
+  if (!allText) return undefined;
+
+  const bant: { budget?: string; authority?: string; need?: string; timeline?: string } = {};
+
+  const budgetPatterns = [
+    /budget[:\s]*(.{10,60})/i,
+    /(?:around|approximately|about|near)\s*(?:rs\.?|inr|₹)\s*([\d,.\s]+(?:lakh|crore|lacs)?)/i,
+    /([\d,.\s]+)\s*(?:lakh|crore|lacs)/i,
+    /spending\s*(.{10,40})/i,
+    /invest(?:ment)?\s*(?:of|around|about)\s*(.{10,40})/i,
+  ];
+  for (const pattern of budgetPatterns) {
+    const match = allText.match(pattern);
+    if (match) {
+      bant.budget = match[1]?.trim().slice(0, 100);
+      break;
+    }
+  }
+
+  const authorityPatterns = [
+    /(?:decision|decide|final say|authority|approve)\s*(.{10,50})/i,
+    /(?:who else|anyone else|team|partner|spouse|family)\s*(.{10,50})/i,
+    /(?:boss|manager|director|owner)\s*(.{10,50})/i,
+  ];
+  for (const pattern of authorityPatterns) {
+    const match = allText.match(pattern);
+    if (match) {
+      bant.authority = match[0]?.trim().slice(0, 100);
+      break;
+    }
+  }
+
+  const needPatterns = [
+    /(?:looking for|need|want|interested in|seeking)\s*(.{10,60})/i,
+    /(?:personal|investment|buying|purchase)\s*(.{10,50})/i,
+    /(?:problem|challenge|issue|struggle)\s*(.{10,50})/i,
+  ];
+  for (const pattern of needPatterns) {
+    const match = allText.match(pattern);
+    if (match) {
+      bant.need = match[1]?.trim().slice(0, 100);
+      break;
+    }
+  }
+
+  const timelinePatterns = [
+    /(?:timeline|when|by when|timeframe|deadline)\s*(.{10,50})/i,
+    /(?:within|in)\s*(\d+\s*(?:month|week|day|year)s?)/i,
+    /(?:this|next)\s*(month|quarter|year|week)/i,
+    /(?:urgent|asap|immediately|soon|flexible)\s*(.{0,30})/i,
+  ];
+  for (const pattern of timelinePatterns) {
+    const match = allText.match(pattern);
+    if (match) {
+      bant.timeline = match[1]?.trim().slice(0, 100) || match[0]?.trim().slice(0, 100);
+      break;
+    }
+  }
+
+  return Object.keys(bant).length > 0 ? bant : undefined;
+}
+
+function determineNextAction(outcome: string): string {
+  if (outcome === "booked") return "meeting_scheduled";
+  if (outcome === "interested") return "follow_up_with_details";
+  if (outcome === "not_interested") return "park_lead";
+  if (outcome === "no_answer" || outcome === "failed") return "retry";
+  return "follow_up";
+}
+
+function getNextRetryTime(attemptNumber: number): Date {
+  const now = new Date();
+  const hours = attemptNumber === 1 ? 24 : 48;
+  return new Date(now.getTime() + hours * 60 * 60 * 1000);
 }
 
 function sleep(ms: number): Promise<void> {

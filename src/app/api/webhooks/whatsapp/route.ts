@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { processInboundWhatsApp } from "@/backend/agents/inbound-handler";
+import { db } from "@/backend/db";
+import { handleWhatsAppWebhook } from "@/backend/messaging/whatsapp";
+
+// ── WhatsApp Webhook ──
+// Handles both:
+// 1. Real Meta WhatsApp Cloud API webhooks (object: "whatsapp_business_account")
+// 2. Legacy payloads (leadId, clientId, messageBody)
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -9,7 +15,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { leadId, clientId, messageBody, timestamp } = body as {
+  // Detect Meta webhook format vs legacy
+  const payload = body as Record<string, unknown>;
+  const isMetaWebhook =
+    payload.object === "whatsapp_business_account" ||
+    (Array.isArray(payload.entry) && payload.entry.length > 0);
+
+  if (isMetaWebhook) {
+    // Real Meta WhatsApp webhook — full conversational AI pipeline
+    try {
+      const result = await handleWhatsAppWebhook(db, body);
+      return NextResponse.json({ received: true, ...result });
+    } catch (err) {
+      console.error("[api/webhooks/whatsapp] Meta webhook error:", err);
+      return NextResponse.json({ received: true });
+    }
+  }
+
+  // Legacy format: { leadId, clientId, messageBody, timestamp }
+  const { leadId, clientId, messageBody, timestamp } = payload as {
     leadId?: string;
     clientId?: string;
     messageBody?: string;
@@ -27,6 +51,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const { processInboundWhatsApp } = await import("@/backend/agents/inbound-handler");
     const result = await processInboundWhatsApp({
       leadId,
       clientId,
@@ -36,7 +61,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
-    console.error("[api/webhooks/whatsapp] error", err);
+    console.error("[api/webhooks/whatsapp] legacy error:", err);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

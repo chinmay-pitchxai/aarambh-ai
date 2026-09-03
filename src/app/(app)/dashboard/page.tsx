@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { LineChart, MultiLineChart, StackedAreaChart, Heatmap, BarChart, GaugeChart, KPICard, groupByDate, groupByDateAndCategory } from "@/components/Charts";
-import NotificationBell from "@/components/NotificationBell/NotificationBell";
 interface Stats {
   pipeline: Record<string, number>;
   bands: Record<string, number>;
@@ -229,7 +228,6 @@ export default function DashboardPage() {
           </h1>
           <p style={{ fontSize: 16, marginTop: 12 }}>Every lead tracked. Nothing leaks. Real-time.</p>
         </div>
-        <NotificationBell />
       </div>
 
       {/* Primary Stats */}

@@ -247,8 +247,7 @@ export async function handleGmailWebhook(
     message: { ...parsed, leadId: resolved.leadId, clientId: resolved.clientId, tenantId },
   });
 
-  // Send conversational reply if one was generated
-  if (result.reply && result.replySent && result.action !== "dnc" && result.action !== "interested" && parsed.from) {
+  if (result.reply && result.replySent && result.action !== "dnc" && parsed.from) {
     const subject = parsed.subject
       ? `Re: ${parsed.subject.replace(/^(Re:|Fwd:)\s*/i, "")}`
       : "Re: Your message";

@@ -8,17 +8,9 @@ import type { Db, InboundMessage, InboundProcessResult, MessageChannel } from ".
 
 export interface ProcessInboundInput {
   channel: MessageChannel;
-  /** leadId/clientId must be resolved by the calling adapter. */
   message: InboundMessage & { leadId: string; clientId: string };
 }
 
-/**
- * Routes a normalized inbound message to its intent handler:
- *  - DNC/opt-out: persist consent opt-out, set the global DNC flag, mark the
- *    client lead as dnc and cancel all pending retry/outreach jobs.
- *  - Interested: flip the client lead to booked and enqueue a booking job.
- *  - Neutral: persisted only.
- */
 export async function processInboundMessage(
   db: Db,
   input: ProcessInboundInput,
@@ -33,7 +25,7 @@ export async function processInboundMessage(
     clientId,
     channel: channel === "whatsapp" ? "whatsapp" : "email",
     body: channel === "gmail" && message.subject ? `[${message.subject}] ${message.body}` : message.body,
-    detectedInterest: intent === "interested",
+    detectedInterest: intent === "interested" || intent === "meeting_request",
     receivedAt: message.receivedAt ?? new Date(),
   });
 
@@ -42,16 +34,55 @@ export async function processInboundMessage(
     return { intent, action: "dnc", leadId, clientId };
   }
 
+  if (intent === "meeting_request") {
+    await db
+      .update(schema.clientLeads)
+      .set({ status: "qualified", lastCallAt: new Date() })
+      .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
+
+    const slots = await offerAndFormatSlots(db, { clientId, leadId });
+    const slotMessage = slots.length > 0
+      ? `\n\nHere are some available time slots:\n${slots}`
+      : "";
+
+    const lead = await db.select().from(schema.leads).where(eq(schema.leads.id, leadId)).limit(1);
+    const leadName = lead[0]?.firstName || "there";
+
+    const reply = `Great to hear you'd like to schedule a meeting, ${leadName}!${slotMessage}\n\nJust reply with the slot that works best for you, or let me know your preferred time and I'll get it set up.`;
+
+    await saveConversationTurn(db, {
+      leadId,
+      clientId,
+      channel,
+      direction: "outbound",
+      body: reply,
+    });
+
+    return { intent, action: "meeting_request", leadId, clientId, reply, replySent: true };
+  }
+
   if (intent === "interested") {
     await db
       .update(schema.clientLeads)
-      .set({ status: "booked", lastCallAt: new Date() })
+      .set({ status: "qualified", lastCallAt: new Date() })
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, clientId)));
-    await enqueueBookingJob(db, { leadId, clientId, tenantId: message.tenantId ?? clientId });
-    return { intent, action: "interested", leadId, clientId };
+
+    const lead = await db.select().from(schema.leads).where(eq(schema.leads.id, leadId)).limit(1);
+    const leadName = lead[0]?.firstName || "there";
+
+    const reply = `Thanks for your interest, ${leadName}! I'd love to help you get started. Would you like to schedule a quick meeting to discuss how we can help? Just let me know a time that works for you.`;
+
+    await saveConversationTurn(db, {
+      leadId,
+      clientId,
+      channel,
+      direction: "outbound",
+      body: reply,
+    });
+
+    return { intent, action: "interested", leadId, clientId, reply, replySent: true };
   }
 
-  // For neutral and question intents, generate a conversational reply
   if (intent === "neutral" || intent === "question") {
     try {
       const replyResult = await generateReply(db, {
@@ -62,7 +93,6 @@ export async function processInboundMessage(
         incomingMessage: message.body,
       });
 
-      // Save the outbound reply to conversation history
       await saveConversationTurn(db, {
         leadId,
         clientId,
@@ -86,6 +116,38 @@ export async function processInboundMessage(
   }
 
   return { intent, action: "neutral", leadId, clientId };
+}
+
+async function offerAndFormatSlots(
+  db: Db,
+  opts: { clientId: string; leadId: string },
+): Promise<string> {
+  try {
+    const { offerSlots } = await import("../calendar/booking");
+    const slots = await offerSlots(db, opts.clientId, opts.leadId);
+    if (slots.length === 0) return "";
+
+    return slots
+      .map((slot, i) => {
+        const startStr = slot.start.toLocaleString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Asia/Kolkata",
+        });
+        const endStr = slot.end.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Asia/Kolkata",
+        });
+        return `${i + 1}. ${startStr} - ${endStr} IST`;
+      })
+      .join("\n");
+  } catch {
+    return "";
+  }
 }
 
 async function handleOptOut(

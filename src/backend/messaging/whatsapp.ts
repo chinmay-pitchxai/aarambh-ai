@@ -285,18 +285,39 @@ export async function handleWhatsAppWebhook(
       message: { ...msg, leadId: resolved.leadId, clientId: resolved.clientId, tenantId },
     });
 
-    // Send conversational reply if one was generated and we're within session window
-    if (result.reply && result.replySent && result.action !== "dnc" && result.action !== "interested") {
+    if (result.action === "interested" || result.action === "meeting_request") {
+      const [lead] = await db
+        .select()
+        .from(schema.leads)
+        .where(eq(schema.leads.id, resolved.leadId))
+        .limit(1);
+      const leadName = lead?.firstName || "there";
+
+      const infoSent = await callWhatsAppApi(msg.from || "", "info_send", [leadName]);
+      if (infoSent) {
+        await db.insert(schema.messages).values({
+          id: randomUUID(),
+          leadId: resolved.leadId,
+          clientId: resolved.clientId,
+          channel: "whatsapp",
+          direction: "outbound",
+          body: `[info_send template] Hi ${leadName}, here's the information you requested.`,
+          waMessageId: infoSent,
+          templateName: "info_send",
+        });
+      }
+    }
+
+    if (result.reply && result.replySent && result.action !== "dnc") {
       const withinWindow = await isWithinSessionWindow(db, {
         leadId: resolved.leadId,
         clientId: resolved.clientId,
       });
 
       if (withinWindow) {
-        const replyText: string = result.reply ? result.reply : "I'll get back to you on that.";
+        const replyText: string = result.reply;
         const waReplyId = await callWhatsAppFreeForm(msg.from || "", replyText);
         if (waReplyId) {
-          // Persist the outbound conversational reply
           await db.insert(schema.messages).values({
             id: randomUUID(),
             leadId: resolved.leadId,

@@ -8,6 +8,8 @@ import { and, eq } from "drizzle-orm";
 import { schema } from "@/backend/db";
 import { createNotificationForTenant, formatNotificationMessage } from "@/backend/services/notifications";
 import { createMeeting as createCalendarEvent, updateBookingWithCalendarEvent } from "@/backend/services/calendar-composio";
+import { callWhatsAppApi } from "@/backend/messaging/whatsapp";
+import { randomUUID } from "crypto";
 
 // ── Meetings v1 API ──
 // GET  /api/v1/meetings            → list tenant's meetings
@@ -104,7 +106,7 @@ export async function POST(req: NextRequest) {
         description: notes ?? undefined,
       });
 
-      await updateBookingWithCalendarEvent(auth.ctx.tenantId, booking.id, calendarEvent.id);
+      await updateBookingWithCalendarEvent(auth.ctx.tenantId, booking.id, calendarEvent.id, calendarEvent.meetLink);
     } catch (calErr) {
       console.error("[api/v1/meetings] Google Calendar event creation failed (non-fatal)", calErr);
     }
@@ -113,6 +115,50 @@ export async function POST(req: NextRequest) {
       .update(schema.clientLeads)
       .set({ status: "booked" })
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, auth.ctx.tenantId)));
+
+    try {
+      const [lead] = await db
+        .select({ firstName: schema.leads.firstName, phoneE164: schema.leads.phoneE164 })
+        .from(schema.leads)
+        .where(eq(schema.leads.id, leadId))
+        .limit(1);
+
+      if (lead?.phoneE164) {
+        const leadName = lead.firstName || "there";
+        const dateStr = start.toLocaleDateString("en-US", {
+          weekday: "long",
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+          timeZone: "Asia/Kolkata",
+        });
+        const timeStr = start.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Asia/Kolkata",
+        });
+        const meetingDetails = booking.meetingUrl
+          ? `\nJoin: ${booking.meetingUrl}`
+          : "";
+        const params = [leadName, dateStr, timeStr, meetingDetails];
+
+        const waId = await callWhatsAppApi(lead.phoneE164, "meeting_link", params);
+        if (waId) {
+          await db.insert(schema.messages).values({
+            id: randomUUID(),
+            leadId,
+            clientId: auth.ctx.tenantId,
+            channel: "whatsapp",
+            direction: "outbound",
+            body: `Meeting booked for ${dateStr} at ${timeStr} IST${meetingDetails}`,
+            waMessageId: waId,
+            templateName: "meeting_link",
+          });
+        }
+      }
+    } catch (waErr) {
+      console.error("[api/v1/meetings] WhatsApp confirmation failed (non-fatal)", waErr);
+    }
 
     createNotificationForTenant(db, {
       tenantId: auth.ctx.tenantId,

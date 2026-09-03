@@ -176,9 +176,9 @@ export async function searchApolloProspects(icp: IcpProfile, limit = 20): Promis
 
 async function fallbackFromOrganizations(icp: IcpProfile, limit: number): Promise<ApolloProspect[]> {
   const params = new URLSearchParams({ page: "1", per_page: String(Math.min(limit, 25)) });
-  appendArray(params, "organization_industry_tag_ids", []);
   if (icp.locations.length > 0) params.set("q_organization_locations", icp.locations[0]);
-  if (icp.keywords.length > 0) params.set("q_keywords", icp.keywords.slice(0, 3).join(" "));
+  const searchKeywords = [...icp.industries.slice(0, 2), ...icp.keywords.slice(0, 3)];
+  if (searchKeywords.length > 0) params.set("q_keywords", searchKeywords.join(" "));
   appendArray(params, "organization_num_employees_ranges", icp.employeeRanges.slice(0, 3));
 
   try {
