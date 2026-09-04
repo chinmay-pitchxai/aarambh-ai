@@ -1,6 +1,6 @@
 import type { AgentContext } from "./types";
-import { getVobizClient } from "../integrations/vobiz";
-import { requireVobizConfig, serverConfig } from "../config";
+import { serverConfig } from "../config";
+import { getTenantVobizConfig } from "../telephony/tenant-telephony";
 
 // ── Booking Confirmer Agent ──
 // Calls the lead to confirm a scheduled meeting (NOT sends a link).
@@ -9,10 +9,11 @@ import { requireVobizConfig, serverConfig } from "../config";
 // owns booking creation. This agent NEVER fabricates call outcomes and NEVER
 // creates bookings from anything but a confirmed provider outcome.
 
-async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
-  const { fromNumber } = requireVobizConfig();
+async function dialVobiz(phoneE164: string, clientId: string): Promise<{ callId: string; status: string }> {
+  const { db, schema } = await import("../db");
+  const { client, fromNumber } = await getTenantVobizConfig(db, clientId);
   const answerUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
-  const result = await getVobizClient().initiateCall(fromNumber, phoneE164, answerUrl, {
+  const result = await client.initiateCall(fromNumber, phoneE164, answerUrl, {
     timeout: 30,
     callbackUrl: answerUrl,
   });
@@ -98,7 +99,7 @@ Keep it under 30 seconds. Speak naturally and warmly.`;
   // 4. Submit the real confirmation call. The terminal outcome arrives via
   // the provider status/hangup callback and is routed by the outcome router,
   // which owns booking creation. Never book from a guessed outcome.
-  const { callId: vobizCallId, status } = await dialVobiz(lead.phoneE164);
+  const { callId: vobizCallId, status } = await dialVobiz(lead.phoneE164, clientId);
   ctx.log("booking-confirmer submitted real call", { vobizCallId, status });
 
   // 5. Store pending call record (outcome filled in by webhook flow)

@@ -95,6 +95,12 @@ export interface VobizHealth {
   error?: string;
 }
 
+export interface WebhookRegistrationResult {
+  configured: boolean;
+  url: string;
+  message?: string;
+}
+
 // ── Webhook signature verification ──
 // Vobiz status callbacks (answer_url / hangup_url) post call fields; there is
 // no documented HMAC scheme for them. Keep this helper for deployments that
@@ -412,6 +418,18 @@ export class VobizClient {
   }
 
   /**
+   * Thorough credential validation. Unlike getBalance() (which swallows all
+   * errors), this PROVES the credentials work by hitting the account numbers
+   * endpoint — which surfaces 401/403/404/network distinctly. Balance remains
+   * best-effort: a working account with a temporarily unavailable balance
+   * endpoint still validates.
+   */
+  async verifyCredentials(): Promise<VobizBalance | null> {
+    await this.listAccountNumbers(1, 1);
+    return this.getBalance();
+  }
+
+  /**
    * Connectivity probe. Distinguishes: DNS/network down, API down,
    * missing credentials, and bad credentials — without mutating anything.
    */
@@ -461,6 +479,66 @@ export class VobizClient {
         error: message,
       };
     }
+  }
+
+  /**
+   * Best-effort, non-fatal webhook registration for BOTH outbound and inbound
+   * call events. The same {APP_URL}/api/v1/webhooks/vobiz URL is registered for
+   * outbound status/hangup callbacks and, where the account exposes an inbound
+   * endpoint, for inbound call events (call.answered / call.completed /
+   * call.failed / inbound.call). It tries a handful of plausible payload shapes
+   * and endpoints. The public Vobiz API does NOT consistently document a
+   * webhook-registration endpoint, so this is purely additive: if the endpoint
+   * is missing (400/404/405) or the network is down, it reports
+   * `configured: false` with a clear `message` and NEVER throws — outbound
+   * calls still deliver callbacks via the per-call `answer_url` / `hangup_url`.
+   */
+  async registerWebhook(url: string): Promise<WebhookRegistrationResult> {
+    const outboundEvents = ["call.initiated", "call.ringing", "call.answered", "call.completed", "call.failed", "call.status", "call.hangup"];
+    const inboundEvents = ["inbound.call", "call.answered", "call.completed", "call.failed"];
+
+    const attempts: Array<{ path: string; body: Record<string, unknown> }> = [
+      { path: "/webhook", body: { url, events: outboundEvents } },
+      { path: "/webhook", body: { url, events: [...outboundEvents, ...inboundEvents] } },
+      { path: "/webhook", body: { callback_url: url, events: [...outboundEvents, ...inboundEvents] } },
+      { path: "/webhook", body: { target: url, events: outboundEvents, direction: "outbound" } },
+      { path: "/webhook/inbound", body: { url, events: inboundEvents } },
+      { path: "/inbound/webhook", body: { callback_url: url, events: inboundEvents, direction: "inbound" } },
+      { path: "/webhook", body: { url, events: outboundEvents, direction: "outbound" } },
+      { path: "/webhook", body: { url, events: inboundEvents, direction: "inbound" } },
+    ];
+
+    let lastError: string | undefined;
+    for (const attempt of attempts) {
+      try {
+        await this.request("POST", this.accountPath(attempt.path), attempt.body);
+        return {
+          configured: true,
+          url,
+          message: "Webhook registered for outbound and inbound call events.",
+        };
+      } catch (err) {
+        if (err instanceof VobizApiError) {
+          const { status } = err.vobizError;
+          if (status === 401 || status === 403) {
+            lastError = err.message;
+            break;
+          }
+          if (status === 404 || status === 405 || status === 400) {
+            lastError = `webhook endpoint not supported (HTTP ${status})`;
+            continue;
+          }
+          lastError = err.message;
+        } else {
+          lastError = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
+    return {
+      configured: false,
+      url,
+      message: lastError || "Webhook endpoint unavailable; outbound callbacks still delivered via per-call answer_url/hangup_url.",
+    };
   }
 
   // ── Capability check (verified against public docs) ──

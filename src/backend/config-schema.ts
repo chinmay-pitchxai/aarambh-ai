@@ -29,6 +29,7 @@ const configSchema = z.object({
   VOICE_NAME: optional,
   VOICE_LANGUAGE: optional,
   COMPOSIO_API_KEY: optional,
+  COMPOSIO2_API_KEY: optional,
   CALENDAR_PROVIDER: z.enum(["composio", "google"]).default("composio"),
   AUTO_ONBOARD_ENABLED: z.enum(["true", "false"]).default("true"),
   FREE_SAMPLE_LEADS: z.preprocess((v) => (typeof v === "string" && v.trim() ? Number(v) : v), z.number().int().min(0).default(3)),
@@ -84,6 +85,9 @@ export function parseServerConfig(input: Record<string, string | undefined>) {
     }),
     composio: Object.freeze({
       apiKey: environment.COMPOSIO_API_KEY,
+    }),
+    composio2: Object.freeze({
+      apiKey: environment.COMPOSIO2_API_KEY,
     }),
     calendarProvider: environment.CALENDAR_PROVIDER,
     autoOnboardEnabled: environment.AUTO_ONBOARD_ENABLED === "true",

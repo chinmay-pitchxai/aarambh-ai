@@ -395,17 +395,17 @@ export async function initiateCall(
     return { success: false, error: "No phone number available for this lead" };
   }
 
-  // Submit a REAL call via the Vobiz adapter. The terminal outcome arrives
+  // Submit a REAL call via the Vobiz adapter, using the tenant's assigned
+  // caller-ID number and stored credentials. The terminal outcome arrives
   // via the provider status/hangup callback — never fabricated here.
-  const { requireVobizConfig } = await import("../config");
-  const { getVobizClient } = await import("../integrations/vobiz");
-  const { fromNumber } = requireVobizConfig();
-  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/vobiz`;
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/v1/webhooks/vobiz`;
+  const { getTenantVobizConfig } = await import("../telephony/tenant-telephony");
 
   let callId: string;
   let status: string;
   try {
-    const result = await getVobizClient().initiateCall(fromNumber, phone, webhookUrl, {
+    const { client, fromNumber } = await getTenantVobizConfig(db, tenantId);
+    const result = await client.initiateCall(fromNumber, phone, webhookUrl, {
       timeout: 30,
       callbackUrl: webhookUrl,
     });

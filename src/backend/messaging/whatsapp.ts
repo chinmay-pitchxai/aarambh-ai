@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import * as schema from "../db/schema";
 import { processInboundMessage } from "./inbound";
 import { recordInboxEvent, sha256Hex, DEFAULT_TENANT } from "./webhook-security";
+import { sendTemplate as composioSendTemplate, sendText as composioSendText } from "./whatsapp-composio";
 import type { Db, InboundMessage } from "./types";
 
 export const WHATSAPP_API_VERSION = "v19.0";
@@ -67,10 +68,19 @@ export async function callWhatsAppApi(
   to: string,
   templateName: string,
   params: string[],
+  tenantId?: string,
 ): Promise<string | null> {
   const phoneId = process.env.WHATSAPP_PHONE_ID;
   const token = process.env.WHATSAPP_API_TOKEN;
   if (!phoneId || !token) {
+    if (tenantId) {
+      try {
+        const id = await composioSendTemplate(tenantId, to, templateName, params);
+        if (id !== null) return id;
+      } catch (err) {
+        console.error("[WA] Composio template send failed, falling back to stub:", err);
+      }
+    }
     console.log(`[WA-STUB] To: ${to}, Template: ${templateName}`);
     return `wa-stub-${randomUUID().slice(0, 8)}`;
   }
@@ -105,10 +115,18 @@ export async function callWhatsAppApi(
  * Sends a free-form text message via WhatsApp (non-template).
  * Only valid within 24h of the last user-initiated message.
  */
-export async function callWhatsAppFreeForm(to: string, text: string): Promise<string | null> {
+export async function callWhatsAppFreeForm(to: string, text: string, tenantId?: string): Promise<string | null> {
   const phoneId = process.env.WHATSAPP_PHONE_ID;
   const token = process.env.WHATSAPP_API_TOKEN;
   if (!phoneId || !token) {
+    if (tenantId) {
+      try {
+        const id = await composioSendText(tenantId, to, text);
+        if (id !== null) return id;
+      } catch (err) {
+        console.error("[WA] Composio free-form send failed, falling back to stub:", err);
+      }
+    }
     console.log(`[WA-STUB-FREE] To: ${to}, Text: ${text.slice(0, 50)}...`);
     return `wa-stub-free-${randomUUID().slice(0, 8)}`;
   }
@@ -293,7 +311,7 @@ export async function handleWhatsAppWebhook(
         .limit(1);
       const leadName = lead?.firstName || "there";
 
-      const infoSent = await callWhatsAppApi(msg.from || "", "info_send", [leadName]);
+      const infoSent = await callWhatsAppApi(msg.from || "", "info_send", [leadName], tenantId);
       if (infoSent) {
         await db.insert(schema.messages).values({
           id: randomUUID(),
@@ -316,7 +334,7 @@ export async function handleWhatsAppWebhook(
 
       if (withinWindow) {
         const replyText: string = result.reply;
-        const waReplyId = await callWhatsAppFreeForm(msg.from || "", replyText);
+        const waReplyId = await callWhatsAppFreeForm(msg.from || "", replyText, tenantId);
         if (waReplyId) {
           await db.insert(schema.messages).values({
             id: randomUUID(),

@@ -3,9 +3,13 @@ node_modules
 
 # Next.js
 .next
+.next-corrupt-*/
 out
 build
 dist
+
+# Build artifacts
+*.tsbuildinfo
 
 # Env — secrets
 .env

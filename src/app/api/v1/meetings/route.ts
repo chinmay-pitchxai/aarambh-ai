@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/backend/db";
-import { listMeetings } from "@/backend/calendar/service";
+import { getBooking, listMeetings } from "@/backend/calendar/service";
 import { bookSlot, scheduleReminders } from "@/backend/calendar/booking";
 import { BookingConflictError } from "@/backend/calendar/service";
 import { requireAuth, requireRole } from "@/backend/auth/middleware";
@@ -8,6 +8,8 @@ import { and, eq } from "drizzle-orm";
 import { schema } from "@/backend/db";
 import { createNotificationForTenant, formatNotificationMessage } from "@/backend/services/notifications";
 import { createMeeting as createCalendarEvent, updateBookingWithCalendarEvent } from "@/backend/services/calendar-composio";
+import { composio2Service } from "@/backend/integrations/composio2";
+import { createMeeting as createZoomMeeting, getConnection as getZoomConnection } from "@/backend/integrations/composio-zoom";
 import { callWhatsAppApi } from "@/backend/messaging/whatsapp";
 import { randomUUID } from "crypto";
 
@@ -49,13 +51,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const { leadId, startTime, durationMin, title, notes, meetingUrl } = body as {
+  const { leadId, startTime, durationMin, title, notes } = body as {
     leadId?: string;
     startTime?: string;
     durationMin?: number;
     title?: string;
     notes?: string;
-    meetingUrl?: string;
   };
 
   if (!leadId || typeof leadId !== "string" || leadId.trim().length === 0) {
@@ -86,30 +87,64 @@ export async function POST(req: NextRequest) {
       console.error("[api/v1/meetings] reminder scheduling failed", reminderErr);
     }
 
-    // Create Google Calendar event via Composio
-    try {
-      const [lead] = await db
-        .select({ email: schema.leads.email, firstName: schema.leads.firstName, lastName: schema.leads.lastName })
-        .from(schema.leads)
-        .where(eq(schema.leads.id, leadId))
-        .limit(1);
+    // Create a host join link: Google Calendar (Meet) when connected, otherwise
+    // Zoom when connected. If neither is connected, the booking simply has no
+    // join URL and the confirmation omits it.
+    let meetingUrl: string | null = null;
+    let meetingProvider: "google_meet" | "zoom" | null = null;
 
-      const end = new Date(start.getTime() + duration * 60_000);
-      const attendees = lead?.email ? [lead.email] : [];
-      const leadName = [lead?.firstName, lead?.lastName].filter(Boolean).join(" ");
+    const [lead] = await db
+      .select({ email: schema.leads.email, firstName: schema.leads.firstName, lastName: schema.leads.lastName })
+      .from(schema.leads)
+      .where(eq(schema.leads.id, leadId))
+      .limit(1);
 
-      const calendarEvent = await createCalendarEvent(auth.ctx.tenantId, {
-        title: title ?? `Meeting with ${leadName || "Prospect"}`,
-        start,
-        end,
-        attendees,
-        description: notes ?? undefined,
-      });
+    const end = new Date(start.getTime() + duration * 60_000);
+    const attendees = lead?.email ? [lead.email] : [];
+    const leadName = [lead?.firstName, lead?.lastName].filter(Boolean).join(" ");
 
-      await updateBookingWithCalendarEvent(auth.ctx.tenantId, booking.id, calendarEvent.id, calendarEvent.meetLink);
-    } catch (calErr) {
-      console.error("[api/v1/meetings] Google Calendar event creation failed (non-fatal)", calErr);
+    const calendarState = await composio2Service.getCalendarConnectionState(auth.ctx.tenantId);
+    if (calendarState.connected) {
+      try {
+        const calendarEvent = await createCalendarEvent(auth.ctx.tenantId, {
+          title: title ?? `Meeting with ${leadName || "Prospect"}`,
+          start,
+          end,
+          attendees,
+          description: notes ?? undefined,
+        });
+
+        meetingUrl =
+          calendarEvent.meetLink ??
+          `https://calendar.google.com/calendar/event?eid=${calendarEvent.id}`;
+        meetingProvider = "google_meet";
+        await updateBookingWithCalendarEvent(auth.ctx.tenantId, booking.id, calendarEvent.id, calendarEvent.meetLink);
+      } catch (calErr) {
+        console.error("[api/v1/meetings] Google Calendar event creation failed (non-fatal)", calErr);
+      }
+    } else if (await getZoomConnection(auth.ctx.tenantId)) {
+      try {
+        const zoomMeeting = await createZoomMeeting(auth.ctx.tenantId, {
+          topic: title ?? `Meeting with ${leadName || "Prospect"}`,
+          startTime: start,
+          durationMin: duration,
+          attendees,
+          agenda: notes ?? undefined,
+        });
+        meetingUrl = zoomMeeting.joinUrl;
+        meetingProvider = "zoom";
+      } catch (zoomErr) {
+        console.error("[api/v1/meetings] Zoom meeting creation failed (non-fatal)", zoomErr);
+      }
     }
+
+    await db
+      .update(schema.bookings)
+      .set({ meetingUrl, meetingProvider })
+      .where(and(eq(schema.bookings.id, booking.id), eq(schema.bookings.clientId, auth.ctx.tenantId)));
+
+    const persistedBooking =
+      (await getBooking(db, auth.ctx.tenantId, booking.id)) ?? { ...booking, meetingUrl, meetingProvider };
 
     await db
       .update(schema.clientLeads)
@@ -117,14 +152,14 @@ export async function POST(req: NextRequest) {
       .where(and(eq(schema.clientLeads.leadId, leadId), eq(schema.clientLeads.clientId, auth.ctx.tenantId)));
 
     try {
-      const [lead] = await db
+      const [waLead] = await db
         .select({ firstName: schema.leads.firstName, phoneE164: schema.leads.phoneE164 })
         .from(schema.leads)
         .where(eq(schema.leads.id, leadId))
         .limit(1);
 
-      if (lead?.phoneE164) {
-        const leadName = lead.firstName || "there";
+      if (waLead?.phoneE164) {
+        const waLeadName = waLead.firstName || "there";
         const dateStr = start.toLocaleDateString("en-US", {
           weekday: "long",
           year: "numeric",
@@ -137,12 +172,12 @@ export async function POST(req: NextRequest) {
           minute: "2-digit",
           timeZone: "Asia/Kolkata",
         });
-        const meetingDetails = booking.meetingUrl
-          ? `\nJoin: ${booking.meetingUrl}`
+        const meetingDetails = persistedBooking.meetingUrl
+          ? `\nJoin: ${persistedBooking.meetingUrl}`
           : "";
-        const params = [leadName, dateStr, timeStr, meetingDetails];
+        const params = [waLeadName, dateStr, timeStr, meetingDetails];
 
-        const waId = await callWhatsAppApi(lead.phoneE164, "meeting_link", params);
+        const waId = await callWhatsAppApi(waLead.phoneE164, "meeting_link", params, auth.ctx.tenantId);
         if (waId) {
           await db.insert(schema.messages).values({
             id: randomUUID(),
@@ -171,7 +206,7 @@ export async function POST(req: NextRequest) {
       meetingId: booking.id,
     }).catch(() => {});
 
-    return NextResponse.json({ meeting: booking }, { status: 201 });
+    return NextResponse.json({ meeting: persistedBooking }, { status: 201 });
   } catch (err) {
     if (err instanceof BookingConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

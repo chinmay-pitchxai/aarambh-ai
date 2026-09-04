@@ -173,6 +173,7 @@ export const bookings = pgTable("bookings", {
   reminderDayBeforeSent: boolean("reminder_day_before_sent").default(false),
   reminderDayOfSent: boolean("reminder_day_of_sent").default(false),
   meetingUrl: text("meeting_url"),
+  meetingProvider: text("meeting_provider"), // "google_meet" | "zoom"
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (t) => [

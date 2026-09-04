@@ -41,14 +41,14 @@ export async function GET(_req: NextRequest) {
           id: nanoid(),
           numberE164: num.e164,
           provider: "vobiz",
-          status: "active",
+          status: "assigned",
           tenantId: session.activeOrganizationId,
           assignedAt: new Date(),
         })
         .onConflictDoUpdate({
           target: schema.phoneNumbers.numberE164,
           set: {
-            status: "active",
+            status: "assigned",
             tenantId: session.activeOrganizationId,
             assignedAt: new Date(),
           },
@@ -59,6 +59,7 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({
       numbers: numbers.map((n) => ({ id: n.id, e164: n.e164, status: n.status, voiceEnabled: n.voiceEnabled, region: n.region })),
       selectedNumber,
+      allowManual: numbers.length === 0,
     });
   } catch (err) {
     console.error("Vobiz numbers error:", err);

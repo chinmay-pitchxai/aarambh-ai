@@ -95,7 +95,7 @@ export async function sendWhatsApp(
     return { ok: true, idempotent: true, providerId: existing.providerId ?? undefined, messageId: existing.id };
   }
 
-  const providerId = await callWhatsAppApi(input.to, input.templateName, input.params);
+  const providerId = await callWhatsAppApi(input.to, input.templateName, input.params, input.tenantId);
   if (!providerId) return { ok: false };
 
   if (resolved.leadId && resolved.clientId) {

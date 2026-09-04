@@ -189,17 +189,17 @@ export async function callLeadAction(
     if (!lead) return { success: false, action: "callLead", summary: "Lead not found", error: "Lead not found" };
     if (!lead.phoneE164) return { success: false, action: "callLead", summary: "No phone number", error: "No phone number available" };
 
-    // Initiate a REAL call via the Vobiz adapter. The terminal outcome
-    // arrives via the provider status/hangup callback — never fabricated here.
-    const { requireVobizConfig } = await import("../config");
-    const { getVobizClient } = await import("../integrations/vobiz");
-    const { fromNumber } = requireVobizConfig();
-    const answerUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/vobiz`;
+    // Initiate a REAL call via the Vobiz adapter using the tenant's assigned
+    // number + stored credentials. The terminal outcome arrives via the
+    // provider status/hangup callback — never fabricated here.
+    const { getTenantVobizConfig } = await import("../telephony/tenant-telephony");
+    const { client, fromNumber } = await getTenantVobizConfig(db, tenantId);
+    const answerUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/v1/webhooks/vobiz`;
 
     let vobizCallId: string;
     let status: string;
     try {
-      const result = await getVobizClient().initiateCall(fromNumber, lead.phoneE164, answerUrl, {
+      const result = await client.initiateCall(fromNumber, lead.phoneE164, answerUrl, {
         timeout: 30,
         callbackUrl: answerUrl,
       });

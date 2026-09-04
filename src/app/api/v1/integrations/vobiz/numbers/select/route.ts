@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/backend/db";
 import { getSession } from "@/backend/auth";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { nanoid } from "@/backend/auth/nanoid";
 
 export async function POST(req: NextRequest) {
@@ -18,20 +18,34 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "numberE164 required" }, { status: 400 });
     }
 
+    // A tenant has exactly ONE active outbound caller-ID: demote any previously
+    // assigned Vobiz number before assigning the newly chosen one.
+    await db
+      .update(schema.phoneNumbers)
+      .set({ status: "available", assignedAt: null })
+      .where(
+        and(
+          eq(schema.phoneNumbers.tenantId, session.activeOrganizationId),
+          eq(schema.phoneNumbers.provider, "vobiz"),
+          eq(schema.phoneNumbers.status, "assigned"),
+          sql`${schema.phoneNumbers.numberE164} != ${numberE164}`,
+        ),
+      );
+
     await db
       .insert(schema.phoneNumbers)
       .values({
         id: nanoid(),
         numberE164,
         provider: "vobiz",
-        status: "active",
+        status: "assigned",
         tenantId: session.activeOrganizationId,
         assignedAt: new Date(),
       })
       .onConflictDoUpdate({
         target: schema.phoneNumbers.numberE164,
         set: {
-          status: "active",
+          status: "assigned",
           tenantId: session.activeOrganizationId,
           assignedAt: new Date(),
         },

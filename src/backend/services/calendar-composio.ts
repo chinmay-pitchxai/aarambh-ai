@@ -1,4 +1,4 @@
-import { composioService } from "@/backend/integrations/composio";
+import { composio2Service } from "@/backend/integrations/composio2";
 import { db, schema } from "@/backend/db";
 import { and, eq } from "drizzle-orm";
 
@@ -51,7 +51,14 @@ async function getConnectedAccountId(tenantId: string): Promise<string | null> {
       )
     );
 
-  return connection?.composioConnectionId ?? null;
+  if (connection?.composioConnectionId) {
+    return connection.composioConnectionId;
+  }
+
+  return composio2Service.resolveConnectedAccount(
+    tenantId,
+    GOOGLE_CALENDAR_INTEGRATION,
+  );
 }
 
 // ── Defensive response parsing ──────────────────────────────────────────────
@@ -115,6 +122,30 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/** Extract the Google Meet join URL (hangoutLink) from a raw calendar event. */
+function extractMeetLink(item: Record<string, unknown>): string | undefined {
+  if (typeof item["hangoutLink"] === "string") return item["hangoutLink"];
+  if (typeof item["hangout_link"] === "string") return item["hangout_link"];
+
+  const conferenceData = asRecord(item["conferenceData"]) ?? asRecord(item["conference_data"]);
+  if (!conferenceData) return undefined;
+
+  const entryPoints = conferenceData["entryPoints"] ?? conferenceData["entry_points"];
+  if (typeof entryPoints === "string") return entryPoints;
+  if (Array.isArray(entryPoints)) {
+    for (const entry of entryPoints) {
+      const rec = asRecord(entry);
+      if (!rec) continue;
+      const type = rec["entryPointType"] ?? rec["entry_point_type"];
+      if (type === "video") {
+        const uri = rec["uri"];
+        if (typeof uri === "string") return uri;
+      }
+    }
+  }
+  return undefined;
+}
+
 function mapGoogleEvent(
   item: Record<string, unknown>,
   fallback?: { start?: Date; end?: Date; title?: string }
@@ -149,14 +180,7 @@ function mapGoogleEvent(
         ? item["html_link"]
         : undefined;
 
-  const meetLink =
-    typeof item["hangoutLink"] === "string"
-      ? item["hangoutLink"]
-      : typeof item["conferenceData"] === "object" && item["conferenceData"] !== null
-        ? typeof (item["conferenceData"] as Record<string, unknown>)["entryPoints"] === "string"
-          ? (item["conferenceData"] as Record<string, unknown>)["entryPoints"] as string
-          : undefined
-        : undefined;
+  const meetLink = extractMeetLink(item);
 
   return {
     id: typeof item["id"] === "string" ? item["id"] : "",
@@ -210,7 +234,7 @@ async function executeCalendarTool(
     );
   }
 
-  const client = composioService.getClient();
+  const client = composio2Service.getClient();
   let result;
   try {
     result = await client.tools.execute(toolSlug, {
@@ -370,6 +394,20 @@ export async function createMeeting(
     description: mapped.description ?? input.description,
     meetLink: mapped.meetLink,
   };
+}
+
+/**
+ * Creates a Google Calendar event with a Google Meet conference attached.
+ * Reuses the exact GOOGLECALENDAR_CREATE_EVENT call shape from `createMeeting`,
+ * which requests a Hangouts Meet room via `create_meeting_room: true` and
+ * returns the event with the `hangoutLink` extracted into `meetLink` (falling
+ * back to conferenceData entry points when the response nests them).
+ */
+export async function createEventWithMeet(
+  tenantId: string,
+  input: CreateEventInput,
+): Promise<CalendarEvent> {
+  return createMeeting(tenantId, input);
 }
 
 export async function cancelMeeting(

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/backend/auth/middleware";
-import { composioService } from "@/backend/integrations/composio";
+import { composio2Service } from "@/backend/integrations/composio2";
 
 export type CalendarStatusAction = "connect" | "reconnect" | "create-auth-config" | "ok";
 
@@ -12,7 +12,7 @@ export async function GET(_req: NextRequest) {
   if (!auth.ok) return auth.response;
 
   try {
-    const state = await composioService.getCalendarConnectionState(auth.ctx.tenantId);
+    const state = await composio2Service.getCalendarConnectionState(auth.ctx.tenantId);
 
     let action: CalendarStatusAction;
     let message: string;

@@ -142,3 +142,86 @@ export async function handleNoReply(leadId: string, clientId: string) {
 
   return { timedOut: true };
 }
+
+// ── Inbound Call (Vobiz) ──
+// Minimal inbound telephony handler: logs the inbound event, correlates the
+// answered (assigned) number to the owning tenant and the caller to a lead,
+// then marks a call record so the AI/dashboard can see it. Pure best-effort —
+// never throws so webhook delivery is never blocked.
+
+interface InboundCallEvent {
+  callId: string;
+  callerNumber?: string;   // source number (who is calling us)
+  dialedNumber?: string;   // assigned number that was dialed (identifies tenant)
+  eventType?: string;
+  receivedAt?: Date;
+}
+
+export async function processInboundVobizCall(ev: InboundCallEvent): Promise<{
+  handled: boolean;
+  clientId?: string;
+  leadId?: string;
+  reason?: string;
+}> {
+  const { callId, callerNumber, dialedNumber, receivedAt } = ev;
+  if (!dialedNumber) {
+    return { handled: false, reason: "no dialed (assigned) number to resolve tenant" };
+  }
+
+  // 1. Which tenant owns the answered number?
+  const [owner] = await db
+    .select({ tenantId: schema.phoneNumbers.tenantId })
+    .from(schema.phoneNumbers)
+    .where(
+      and(
+        eq(schema.phoneNumbers.numberE164, dialedNumber),
+        eq(schema.phoneNumbers.status, "assigned"),
+      ),
+    )
+    .limit(1);
+
+  if (!owner?.tenantId) {
+    return { handled: false, reason: "answered number not assigned to any tenant" };
+  }
+  const clientId = owner.tenantId;
+
+  // 2. Try to match the caller to a lead in that tenant by phone number.
+  let leadId: string | undefined;
+  if (callerNumber) {
+    const [lead] = await db
+      .select({ id: schema.leads.id })
+      .from(schema.leads)
+      .where(eq(schema.leads.phoneE164, callerNumber))
+      .limit(1);
+    if (lead?.id) leadId = lead.id;
+  }
+
+  // 3. Persist to inbound_messages when we have a lead.
+  if (leadId) {
+    await db.insert(schema.inboundMessages).values({
+      id: randomUUID(),
+      leadId,
+      clientId,
+      channel: "call",
+      body: `Inbound call received from ${callerNumber || "unknown"} to ${dialedNumber} (${ev.eventType || "inbound.call"}).`,
+      detectedInterest: false,
+      receivedAt: receivedAt || new Date(),
+    });
+  }
+
+  // 4. Mark the call (a distinct inbound call record) so it appears in call history.
+  await db.insert(schema.calls).values({
+    id: randomUUID(),
+    leadId: leadId ?? "no-lead",
+    clientId,
+    vobizCallId: callId,
+    outcome: null,
+    durationSec: null,
+    pitchUsed: null,
+    summary: `Inbound call from ${callerNumber || "unknown"} to ${dialedNumber}`,
+    startedAt: receivedAt || new Date(),
+    endedAt: receivedAt || new Date(),
+  });
+
+  return { handled: true, clientId, leadId };
+}

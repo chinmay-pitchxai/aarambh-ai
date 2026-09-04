@@ -3,6 +3,7 @@ import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import type { DurableQueue } from "../queue/durable-queue";
 import { isDnc, isInCallingWindow, canInitiateCall } from "./suppression";
+import { resolveOutboundNumber } from "./tenant-telephony";
 import type { CallOutcome } from "../agents/outcome-router";
 
 // ── Call Engine ──
@@ -12,7 +13,7 @@ import type { CallOutcome } from "../agents/outcome-router";
 interface InitiateCallInput {
   tenantId: string;
   leadId: string;
-  fromNumber: string;
+  fromNumber?: string;
 }
 
 interface CallEngineEvent {
@@ -33,7 +34,11 @@ export async function initiateCall(
   queue: DurableQueue,
   input: InitiateCallInput,
 ): Promise<{ success: boolean; jobId?: string; error?: string }> {
-  const { tenantId, leadId, fromNumber } = input;
+  const { tenantId, leadId, fromNumber: fromNumberInput } = input;
+
+  // Resolve the tenant's assigned caller-ID number when the caller did not
+  // supply one, so calls always originate from the selected number.
+  const fromNumber = fromNumberInput || (await resolveOutboundNumber(db, tenantId)) || "";
 
   const [lead] = await db
     .select()

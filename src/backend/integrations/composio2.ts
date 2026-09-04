@@ -10,10 +10,8 @@ interface ConnectionStatus {
   lastSyncedAt?: Date;
 }
 
-// Maps our integration IDs to Composio auth config IDs
-const AUTH_CONFIG_MAP: Record<string, string> = {};
+const AUTH_CONFIG_MAP2: Record<string, string> = {};
 
-// Maps our integration IDs to Composio toolkit slugs
 const SLUG_MAP: Record<string, string> = {
   gmail: "gmail",
   whatsapp: "whatsapp",
@@ -27,10 +25,6 @@ const SLUG_MAP: Record<string, string> = {
   zoom: "zoom",
 };
 
-// Canonical Composio toolkit slug for Google Calendar (per
-// https://docs.composio.dev/toolkits/googlecalendar). The toolkit API accepts
-// both casings, but the canonical/docs form — also used as the prefix of every
-// Google Calendar tool slug (e.g. GOOGLECALENDAR_CREATE_EVENT) — is uppercase.
 export const GOOGLE_CALENDAR_INTEGRATION_ID = "google_calendar";
 export const GOOGLE_CALENDAR_TOOLKIT_SLUG = "GOOGLECALENDAR";
 
@@ -44,14 +38,14 @@ export interface CalendarConnectionState {
 
 let authConfigMapLoaded = false;
 
-export class ComposioService {
+export class Composio2Service {
   private composio: Composio | null = null;
 
   getClient(): Composio {
     if (!this.composio) {
-      const apiKey = process.env.COMPOSIO_API_KEY;
+      const apiKey = process.env.COMPOSIO2_API_KEY;
       if (!apiKey) {
-        throw new Error('COMPOSIO_API_KEY is not set');
+        throw new Error('COMPOSIO2_API_KEY is not set');
       }
       this.composio = new Composio({ apiKey });
     }
@@ -66,22 +60,17 @@ export class ComposioService {
       for (const config of result.items || []) {
         const slug = config.toolkit?.slug;
         if (slug) {
-          // Map the slug to our integration ID and store the auth config ID.
-          // Match case-insensitively: Composio reports the Google Calendar
-          // toolkit slug in its canonical uppercase form ("GOOGLECALENDAR")
-          // while SLUG_MAP stores it lowercase ("googlecalendar").
           const slugLower = slug.toLowerCase();
           const integrationId =
             Object.entries(SLUG_MAP).find(([, s]) => s.toLowerCase() === slugLower)?.[0] ??
             (slugLower === GOOGLE_CALENDAR_TOOLKIT_SLUG.toLowerCase()
               ? GOOGLE_CALENDAR_INTEGRATION_ID
               : undefined);
-          if (integrationId && !AUTH_CONFIG_MAP[integrationId]) {
-            AUTH_CONFIG_MAP[integrationId] = config.id;
+          if (integrationId && !AUTH_CONFIG_MAP2[integrationId]) {
+            AUTH_CONFIG_MAP2[integrationId] = config.id;
           }
-          // Also store by slug directly
-          if (!AUTH_CONFIG_MAP[slug]) {
-            AUTH_CONFIG_MAP[slug] = config.id;
+          if (!AUTH_CONFIG_MAP2[slug]) {
+            AUTH_CONFIG_MAP2[slug] = config.id;
           }
         }
       }
@@ -92,7 +81,7 @@ export class ComposioService {
   }
 
   getAuthConfigId(integration: string): string | null {
-    return AUTH_CONFIG_MAP[integration] || null;
+    return AUTH_CONFIG_MAP2[integration] || null;
   }
 
   async getConnectionStatus(clientId: string, integration: string): Promise<ConnectionStatus | null> {
@@ -129,17 +118,14 @@ export class ComposioService {
     needsConfig?: boolean;
   }> {
     try {
-      // Check if already connected
       const existing = await this.getConnectionStatus(clientId, integration);
       if (existing?.connected) {
         return { success: true, alreadyConnected: true };
       }
 
-      // Load auth configs if not loaded
       await this.loadAuthConfigs();
 
-      // Get the auth config for this integration
-      const authConfigId = AUTH_CONFIG_MAP[integration];
+      const authConfigId = AUTH_CONFIG_MAP2[integration];
       if (!authConfigId) {
         return {
           success: false,
@@ -148,7 +134,6 @@ export class ComposioService {
         };
       }
 
-      // Create a link session via Composio SDK
       const client = this.getClient();
       const composioClient = client.getClient();
 
@@ -178,7 +163,6 @@ export class ComposioService {
     try {
       const { clientId, integration, connectedAccountId, status } = params;
 
-      // Try to get account info from Composio
       let accountEmail: string | undefined;
       try {
         const client = this.getClient();
@@ -221,13 +205,11 @@ export class ComposioService {
     integration: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // Get the connection to find the composio account ID
       const connection = await this.getConnectionStatus(clientId, integration);
       if (!connection?.connected) {
-        return { success: true }; // Already disconnected
+        return { success: true };
       }
 
-      // Try to delete from Composio if we have the account ID
       if (connection.composioAccountId) {
         try {
           const client = this.getClient();
@@ -237,11 +219,9 @@ export class ComposioService {
           });
         } catch (err: any) {
           console.warn('Failed to delete from Composio (non-fatal):', err.message);
-          // Continue with local deletion even if Composio API fails
         }
       }
 
-      // Delete from our DB
       await db
         .delete(schema.oauthConnections)
         .where(
@@ -282,30 +262,20 @@ export class ComposioService {
     }));
   }
 
-  /**
-   * Ensure a Composio auth config exists for the Google Calendar toolkit,
-   * creating one with Composio Managed Auth when missing.
-   *
-   * Verified live (2026-09-03): `toolkits.get("GOOGLECALENDAR")` resolves,
-   * so the uppercase canonical slug is tried first, with a lowercase
-   * fallback. Returns whether a config was created and its id.
-   */
-   async ensureCalendarAuthConfig(): Promise<{
+  async ensureCalendarAuthConfig(): Promise<{
     created: boolean;
     authConfigId: string | null;
     toolkitSlugUsed?: string;
     error?: string;
   }> {
     await this.loadAuthConfigs();
-    const existing = AUTH_CONFIG_MAP[GOOGLE_CALENDAR_INTEGRATION_ID];
+    const existing = AUTH_CONFIG_MAP2[GOOGLE_CALENDAR_INTEGRATION_ID];
     if (existing) {
       return { created: false, authConfigId: existing };
     }
 
     const client = this.getClient();
 
-    // Read-only casing check: prefer the canonical uppercase slug when the
-    // toolkit API recognises it.
     let toolkitSlugUsed = GOOGLE_CALENDAR_TOOLKIT_SLUG;
     try {
       await client.toolkits.get(GOOGLE_CALENDAR_TOOLKIT_SLUG);
@@ -317,8 +287,8 @@ export class ComposioService {
       const created = await client.authConfigs.create(toolkitSlug, {
         type: "use_composio_managed_auth",
       });
-      AUTH_CONFIG_MAP[GOOGLE_CALENDAR_INTEGRATION_ID] = created.id;
-      AUTH_CONFIG_MAP[toolkitSlug] = created.id;
+      AUTH_CONFIG_MAP2[GOOGLE_CALENDAR_INTEGRATION_ID] = created.id;
+      AUTH_CONFIG_MAP2[toolkitSlug] = created.id;
       return created.id;
     };
 
@@ -326,7 +296,6 @@ export class ComposioService {
       const authConfigId = await createWith(toolkitSlugUsed);
       return { created: true, authConfigId, toolkitSlugUsed };
     } catch (err: unknown) {
-      // Fall back to the alternate casing once before giving up.
       const fallback =
         toolkitSlugUsed === GOOGLE_CALENDAR_TOOLKIT_SLUG
           ? GOOGLE_CALENDAR_TOOLKIT_SLUG.toLowerCase()
@@ -346,11 +315,6 @@ export class ComposioService {
     }
   }
 
-  /**
-   * Refresh a stale/expired connected account's credentials via
-   * `connectedAccounts.refresh`. Returns success plus the account status when
-   * available. Callers should force full re-auth when this fails.
-   */
   async refreshConnectedAccount(
     accountId: string
   ): Promise<{ success: boolean; status?: string; error?: string }> {
@@ -370,13 +334,9 @@ export class ComposioService {
     }
   }
 
-  /**
-   * Calendar-focused connection state for a tenant: whether a Google Calendar
-   * auth config exists in Composio plus the local oauthConnections row.
-   */
-   async getCalendarConnectionState(tenantId: string): Promise<CalendarConnectionState> {
+  async getCalendarConnectionState(tenantId: string): Promise<CalendarConnectionState> {
     await this.loadAuthConfigs();
-    const authConfigExists = Boolean(AUTH_CONFIG_MAP[GOOGLE_CALENDAR_INTEGRATION_ID]);
+    const authConfigExists = Boolean(AUTH_CONFIG_MAP2[GOOGLE_CALENDAR_INTEGRATION_ID]);
 
     const [connection] = await db
       .select()
@@ -414,12 +374,100 @@ export class ComposioService {
     name: string;
   }>> {
     await this.loadAuthConfigs();
-    return Object.entries(AUTH_CONFIG_MAP).map(([slug, id]) => ({
+    return Object.entries(AUTH_CONFIG_MAP2).map(([slug, id]) => ({
       slug,
       authConfigId: id,
       name: slug,
     }));
   }
+
+  /**
+   * Resolve the Composio connected account for a tenant + integration.
+   * Prefers the cached oauthConnections row; if missing or not active, falls
+   * back to discovering the tenant's accounts directly from Composio2
+   * (matched by `user_id`), then caches the match in oauthConnections so the
+   * automation keeps working without a fresh connect flow.
+   */
+  async resolveConnectedAccount(
+    tenantId: string,
+    integration: string,
+  ): Promise<string | null> {
+    const [existing] = await db
+      .select()
+      .from(schema.oauthConnections)
+      .where(
+        and(
+          eq(schema.oauthConnections.clientId, tenantId),
+          eq(schema.oauthConnections.integration, integration),
+        )
+      );
+
+    if (existing?.status === "active" && existing.composioConnectionId) {
+      return existing.composioConnectionId;
+    }
+
+    try {
+      const client = this.getClient();
+      const composioClient = client.getClient();
+      const result = await composioClient.connectedAccounts.list({
+        user_ids: [tenantId],
+        statuses: ["ACTIVE"],
+        account_type: "ALL",
+      });
+
+      const items = (result as any)?.items ?? (result as any)?.connectedAccounts ?? [];
+      if (!Array.isArray(items) || items.length === 0) return null;
+
+      const configId = AUTH_CONFIG_MAP2[integration] ?? AUTH_CONFIG_MAP2[SLUG_MAP[integration]] ?? null;
+
+      const account = items.find((acc: Record<string, unknown>) => {
+        if (configId) {
+          const accConfig = String(acc["authConfigId"] ?? acc["auth_config_id"] ?? "");
+          if (accConfig === configId) return true;
+        }
+        const app = String(acc["client_unique_id"] ?? acc["app"] ?? "");
+        const toolkit = String(acc["toolkit"] ?? "");
+        return (
+          app.toLowerCase() === integration.toLowerCase() ||
+          toolkit.toLowerCase() === integration.toLowerCase() ||
+          toolkit.toLowerCase() === (SLUG_MAP[integration] ?? "").toLowerCase()
+        );
+      });
+
+      const accountId = account ? String(account["id"] ?? "") : "";
+      if (!accountId) return null;
+
+      const email =
+        typeof account["email"] === "string"
+          ? account["email"]
+          : (account as Record<string, unknown>)["userEmail"] as string | undefined;
+
+      await db
+        .insert(schema.oauthConnections)
+        .values({
+          clientId: tenantId,
+          integration,
+          composioConnectionId: accountId,
+          accountEmail: email || `connected@${integration}.com`,
+          status: "active",
+          lastSyncedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [schema.oauthConnections.clientId, schema.oauthConnections.integration],
+          set: {
+            composioConnectionId: accountId,
+            accountEmail: email || `connected@${integration}.com`,
+            status: "active",
+            lastSyncedAt: new Date(),
+          },
+        });
+
+      return accountId;
+    } catch (error) {
+      console.error(`[composio2] resolveConnectedAccount failed for ${integration}`, error);
+      return null;
+    }
+  }
 }
 
-export const composioService = new ComposioService();
+export const composio2Service = new Composio2Service();

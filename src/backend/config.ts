@@ -14,5 +14,5 @@ export function requireVobizConfig() {
   if (!fromNumber) {
     throw new Error("Vobiz is not configured: VOBIZ_FROM_NUMBER (your provisioned caller-ID number) is required.");
   }
-  return { authId, authToken, fromNumber, apiUrl, webhookUrl: `${serverConfig.appUrl}/api/webhooks/vobiz` };
+  return { authId, authToken, fromNumber, apiUrl, webhookUrl: `${serverConfig.appUrl}/api/v1/webhooks/vobiz` };
 }

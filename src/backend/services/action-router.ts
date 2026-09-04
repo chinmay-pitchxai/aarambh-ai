@@ -327,14 +327,24 @@ async function executeCallLead(tenantId: string, params: Record<string, unknown>
     return { action: "call_lead", success: false, message: "Lead has no phone number." };
   }
 
-  // Check tenant has a phone number
-  const [phoneNumber] = await db
+  // Check tenant has a phone number (prefer the user-selected assigned number,
+  // falling back to an unassigned pool number for auto-setup flows).
+  const [assignedNumber] = await db
     .select({ numberE164: schema.phoneNumbers.numberE164 })
     .from(schema.phoneNumbers)
-    .where(and(eq(schema.phoneNumbers.tenantId, tenantId), eq(schema.phoneNumbers.status, "available")))
+    .where(and(eq(schema.phoneNumbers.tenantId, tenantId), eq(schema.phoneNumbers.status, "assigned")))
     .limit(1);
 
-  if (!phoneNumber) {
+  const phoneNumber = assignedNumber?.numberE164
+    ? assignedNumber
+    : await db
+        .select({ numberE164: schema.phoneNumbers.numberE164 })
+        .from(schema.phoneNumbers)
+        .where(and(eq(schema.phoneNumbers.tenantId, tenantId), eq(schema.phoneNumbers.status, "available")))
+        .limit(1)
+        .then((rows) => rows[0] || null);
+
+  if (!phoneNumber?.numberE164) {
     return {
       action: "call_lead",
       success: false,

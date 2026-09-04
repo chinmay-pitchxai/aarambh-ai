@@ -3,9 +3,10 @@ import { mockDb, mockSelectReturning } from "../../test-utils/mocks";
 
 const { mockExecute } = vi.hoisted(() => ({ mockExecute: vi.fn() }));
 
-vi.mock("../integrations/composio", () => ({
-  composioService: {
+vi.mock("../integrations/composio2", () => ({
+  composio2Service: {
     getClient: () => ({ tools: { execute: mockExecute } }),
+    resolveConnectedAccount: async () => null,
   },
 }));
 

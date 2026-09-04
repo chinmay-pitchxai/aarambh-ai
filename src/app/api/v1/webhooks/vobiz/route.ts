@@ -4,6 +4,7 @@ import { db, schema } from "@/backend/db";
 import { verifyVobizSignature } from "@/backend/webhooks/signature";
 import { serverConfig } from "@/backend/config";
 import { handleCallEvent } from "@/backend/telephony/call-engine";
+import { processInboundVobizCall } from "@/backend/agents/inbound-handler";
 import { randomUUID } from "crypto";
 
 // ── Vobiz Webhook (v1) ──
@@ -101,14 +102,50 @@ export async function POST(request: Request) {
   }
 
   try {
-    await handleCallEvent(db, {} as any, {
-      vobizCallId: rawCallId ? String(rawCallId) : undefined,
-      eventType,
-      payload: payload as Record<string, unknown>,
-      idempotencyKey,
-    });
+    const direction = String(
+      payload.call_direction ||
+        payload.direction ||
+        payload.CallDirection ||
+        "",
+    ).toLowerCase();
+
+    // Inbound call events trigger the inbound handler (persist + mark the
+    // call) so the AI can answer/flag inbound calls. Outbound events keep the
+    // existing outcome routing.
+    if (
+      direction === "inbound" ||
+      /inbound/.test(String(payload.event_type ?? "").toLowerCase()) ||
+      payload.source === payload.to ||
+      payload.caller_number === payload.dialed_number
+    ) {
+      await processInboundVobizCall({
+        callId: rawCallId ? String(rawCallId) : randomUUID(),
+        callerNumber:
+          (payload.from as string) ||
+          (payload.src as string) ||
+          (payload.caller_number as string) ||
+          (payload.source as string),
+        dialedNumber:
+          (payload.to as string) ||
+          (payload.dst as string) ||
+          (payload.dialed_number as string) ||
+          (payload.destination_number as string) ||
+          (payload.recorded_number as string),
+        eventType,
+        receivedAt: payload.event_time
+          ? new Date(String(payload.event_time))
+          : undefined,
+      });
+    } else if (rawCallId) {
+      await handleCallEvent(db, {} as any, {
+        vobizCallId: rawCallId ? String(rawCallId) : undefined,
+        eventType,
+        payload: payload as Record<string, unknown>,
+        idempotencyKey,
+      });
+    }
   } catch (err) {
-    console.error("[v1/webhooks/vobiz] handleCallEvent error:", err);
+    console.error("[v1/webhooks/vobiz] event processing error:", err);
   }
 
   return NextResponse.json({ received: true });

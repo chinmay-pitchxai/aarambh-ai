@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
 import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
-import { getVobizClient, type TranscriptTurn } from "../integrations/vobiz";
+import { type VobizClient, type TranscriptTurn } from "../integrations/vobiz";
 import { serverConfig } from "../config";
+import { getTenantVobizConfig, resolveOutboundNumber } from "../telephony/tenant-telephony";
 import { getActivePromptTemplate } from "../services/sales-prompt-generator";
 import { getLatestMemory, saveLeadMemory } from "../services/lead-memory";
 import { buildSystemPrompt, type CompanyProfile, type LeadProfile, type LeadMemoryContext } from "./system-prompt-builder";
@@ -136,11 +137,12 @@ export async function initiateVoiceCall(
     },
   );
 
-  // 7. Initiate call via Vobiz
-  const vobizClient = getVobizClient();
+  // 7. Initiate call via Vobiz using the tenant's assigned number + credentials.
+  const { client: vobizClient, fromNumber: resolvedFromNumber } = await getTenantVobizConfig(db, tenantId);
+  const fromNumberSafe = resolvedFromNumber || fromNumber || (await resolveOutboundNumber(db, tenantId)) || "";
   const webhookUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
 
-  const callResult = await vobizClient.initiateCall(fromNumber, lead.phoneE164, webhookUrl, {
+  const callResult = await vobizClient.initiateCall(fromNumberSafe, lead.phoneE164, webhookUrl, {
     record: true,
     timeout: 30,
     machineDetection: "enable",
@@ -172,7 +174,7 @@ export async function initiateVoiceCall(
   // In production, Vobiz would stream audio via WebSocket to Gemini.
   // For now we poll status until call ends.
   try {
-    await pollCallUntilEnded(vobizCallId, geminiSession, (status) => {
+    await pollCallUntilEnded(vobizClient, vobizCallId, geminiSession, (status) => {
       if (status === "completed" || status === "failed") {
         callEnded = true;
       }
@@ -405,13 +407,13 @@ function extractNextSteps(transcript: TranscriptTurn[], outcome: string): string
  * Polls Vobiz call status until the call ends (completed/failed/no_answer/busy).
  */
 async function pollCallUntilEnded(
+  vobizClient: VobizClient,
   vobizCallId: string,
   _geminiSession: GeminiLiveSession,
   onStatusChange: (status: string) => void,
   maxPolls = 120,
   pollIntervalMs = 2000,
 ): Promise<void> {
-  const vobizClient = getVobizClient();
   for (let i = 0; i < maxPolls; i++) {
     try {
       const status = await vobizClient.getCallStatus(vobizCallId);

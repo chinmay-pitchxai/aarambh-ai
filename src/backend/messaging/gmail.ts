@@ -99,6 +99,45 @@ export async function sendRawGmail(input: GmailSendRequest): Promise<GmailSendRe
   }
 }
 
+/**
+ * Sends an outbound reply, preferring the Composio Gmail connected account when
+ * the legacy OAuth env vars are absent (otherwise falls back to the legacy path
+ * or its stub/log behaviour). Requires the reply target's tenant context.
+ */
+export async function sendGmailReply(
+  tenantId: string,
+  input: { from: string; subject: string; reply: string; threadId?: string },
+): Promise<GmailSendResponse | null> {
+  const hasLegacy = Boolean(process.env.GMAIL_CLIENT_ID && process.env.GMAIL_REFRESH_TOKEN);
+
+  if (!hasLegacy) {
+    try {
+      const { getConnection, sendEmail } = await import("../integrations/composio-gmail");
+      const connectionId = await getConnection(tenantId);
+      if (connectionId) {
+        const sent = await sendEmail(tenantId, {
+          to: input.from,
+          subject: input.subject,
+          body: input.reply,
+          inReplyToThreadId: input.threadId,
+        });
+        if (sent) {
+          return { id: sent.id, threadId: sent.threadId };
+        }
+      }
+    } catch (err) {
+      console.error("[GMAIL] composio send error:", err);
+    }
+  }
+
+  return sendRawGmail({
+    to: input.from,
+    subject: input.subject,
+    htmlBody: `<p>${input.reply.replace(/\n/g, "<br>")}</p>`,
+    threadId: input.threadId,
+  });
+}
+
 // ── Inbound parsing ──
 
 interface PubSubPush {
@@ -252,10 +291,10 @@ export async function handleGmailWebhook(
       ? `Re: ${parsed.subject.replace(/^(Re:|Fwd:)\s*/i, "")}`
       : "Re: Your message";
 
-    const sent = await sendRawGmail({
-      to: parsed.from,
+    const sent = await sendGmailReply(tenantId, {
+      from: parsed.from,
       subject,
-      htmlBody: `<p>${result.reply.replace(/\n/g, "<br>")}</p>`,
+      reply: result.reply,
       threadId: parsed.threadId,
     });
 

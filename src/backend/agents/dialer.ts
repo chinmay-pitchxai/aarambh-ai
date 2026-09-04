@@ -2,8 +2,8 @@ import type { Agent, AgentContext, DialerInput, DialerOutput, callOutcome } from
 import { db, schema } from "../db";
 import { eq, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import { getVobizClient } from "../integrations/vobiz";
-import { requireVobizConfig, serverConfig } from "../config";
+import { getTenantVobizConfig } from "../telephony/tenant-telephony";
+import { serverConfig } from "../config";
 
 // ── Dialer Agent ──
 // Submits a REAL outbound call through Vobiz (api.vobiz.ai).
@@ -13,9 +13,8 @@ import { requireVobizConfig, serverConfig } from "../config";
 // outcome "initiated". Callers must not schedule follow-ups from this return
 // value; the webhook-driven outcome router owns all post-call actions.
 
-async function dialVobiz(phoneE164: string): Promise<{ callId: string; status: string }> {
-  const { fromNumber } = requireVobizConfig();
-  const client = getVobizClient();
+async function dialVobiz(phoneE164: string, clientId: string): Promise<{ callId: string; status: string }> {
+  const { client, fromNumber } = await getTenantVobizConfig(db, clientId);
   const answerUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
 
   const result = await client.initiateCall(fromNumber, phoneE164, answerUrl, {
@@ -29,7 +28,7 @@ async function getTranscript(_callId: string): Promise<Array<{ role: string; tex
   // Transcripts are produced by our own voice pipeline (Gemini Live) and
   // attached to the call record, not by the telephony provider.
   void _callId;
-  return getVobizClient().getCallTranscript(_callId);
+  return [];
 }
 
 export const dialerAgent: Agent<DialerInput, DialerOutput> = {
@@ -81,7 +80,7 @@ export const dialerAgent: Agent<DialerInput, DialerOutput> = {
 
     // 4. Dial via the real Vobiz API. The provider returns a call UUID;
     // the terminal outcome arrives later through its status/hangup callback.
-    const { callId, status } = await dialVobiz(lead.phoneE164);
+    const { callId, status } = await dialVobiz(lead.phoneE164, clientId);
     ctx.log("dialer submitted real call", { callId, status });
 
     // Record the call as provider-pending. Outcome, duration, transcript,

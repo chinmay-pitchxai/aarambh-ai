@@ -1,10 +1,10 @@
 import { randomUUID } from "crypto";
 import { db, schema } from "../../db";
 import { eq } from "drizzle-orm";
-import { getVobizClient } from "../../integrations/vobiz";
 import { serverConfig } from "../../config";
 import type { DurableQueue, Job } from "../durable-queue";
 import { initiateVoiceCall } from "../../voice/voice-agent";
+import { getTenantVobizConfig } from "../../telephony/tenant-telephony";
 
 // ── Call Worker ──
 // Processes call-init jobs from the durable queue.
@@ -46,11 +46,11 @@ export async function handleCallJob(
     };
   }
 
-  // ── Fallback Path: Basic Vobiz call placement ──
-  const client = getVobizClient();
+  // ── Fallback Path: Basic Vobiz call placement (tenant-scoped) ──
+  const { client, fromNumber: tenantFromNumber } = await getTenantVobizConfig(db, tenantId);
   const webhookUrl = `${serverConfig.appUrl}/api/v1/webhooks/vobiz`;
 
-  const result = await client.initiateCall(fromNumber, toNumber, webhookUrl, {
+  const result = await client.initiateCall(tenantFromNumber || fromNumber, toNumber, webhookUrl, {
     record: true,
     timeout: 30,
     machineDetection: "enable",

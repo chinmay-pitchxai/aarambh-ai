@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/backend/auth/middleware";
-import { composioService } from "@/backend/integrations/composio";
+import { composio2Service } from "@/backend/integrations/composio2";
 
 // ── Create the Google Calendar Composio auth config (v1) ──
 // POST /api/v1/calendar/auth-config — creates the GOOGLECALENDAR auth config
@@ -12,7 +12,7 @@ export async function POST() {
   if (!auth.ok) return auth.response;
 
   try {
-    const result = await composioService.ensureCalendarAuthConfig();
+    const result = await composio2Service.ensureCalendarAuthConfig();
     return NextResponse.json({
       ...result,
       message: result.created

@@ -17,11 +17,13 @@ const INTEGRATIONS: Integration[] = [
   { id: "gmail", name: "Gmail", desc: "Email outreach and calendar access via Gmail", icon: "✉", category: "Email", color: "#C17C60", via: "Composio" },
   { id: "google_calendar", name: "Google Calendar", desc: "Schedule meetings and check availability", icon: "📅", category: "Meetings", color: "#4285F4", via: "Composio" },
   { id: "googlemeet", name: "Google Meet", desc: "Create and manage video meetings", icon: "◉", category: "Meetings", color: "#8A9A8B", via: "Composio" },
+  { id: "zoom", name: "Zoom", desc: "Host video calls and generate join links for booked meetings", icon: "💻", category: "Meetings", color: "#2D8CFF", via: "Composio" },
   { id: "google_maps", name: "Google Maps", desc: "Location data for lead research and targeting", icon: "📍", category: "Data", color: "#EA4335", via: "Composio" },
   { id: "slack", name: "Slack", desc: "Team notifications and collaboration", icon: "⚡", category: "Messaging", color: "#611f69", via: "Composio" },
   { id: "hubspot", name: "HubSpot", desc: "CRM sync for contacts and deals", icon: "⬡", category: "CRM", color: "#FF7A59", via: "Composio" },
   { id: "notion", name: "Notion", desc: "Team workspace and documentation", icon: "▤", category: "Productivity", color: "#2D2D2D", via: "Composio" },
   { id: "vobiz", name: "Vobiz", desc: "Phone calls and voice outreach", icon: "📞", category: "Phone", color: "#6B8E7B", via: "API" },
+  { id: "composio2_test", name: "Composio2 Test", desc: "Test endpoint using the separate COMPOSIO2 key", icon: "🧪", category: "Testing", color: "#7A9A7E", via: "Composio2" },
 ];
 
 export default function ConnectionsPage() {
@@ -42,7 +44,11 @@ export default function ConnectionsPage() {
   const [vobizConnecting, setVobizConnecting] = useState(false);
   const [vobizNumbers, setVobizNumbers] = useState<Array<{ id: string; e164: string; status: string; voiceEnabled: boolean }>>([]);
   const [vobizSelectedNumber, setVobizSelectedNumber] = useState<string | null>(null);
-  const [vobizStep, setVobizStep] = useState<"credentials" | "numbers">("credentials");
+  const [vobizStep, setVobizStep] = useState<"credentials" | "numbers" | "manual">("credentials");
+  const [vobizManualNumber, setVobizManualNumber] = useState("");
+  const [vobizWebhookConfigured, setVobizWebhookConfigured] = useState<boolean | null>(null);
+  const [vobizWebhookUrl, setVobizWebhookUrl] = useState<string | null>(null);
+  const [vobizWebhookMessage, setVobizWebhookMessage] = useState<string | null>(null);
 
   const fetchAllStatuses = useCallback(async (tid: string) => {
     try {
@@ -67,7 +73,7 @@ export default function ConnectionsPage() {
           continue;
         }
         try {
-          const res = await fetch(`/api/composio?action=status&integration=${app.id}&clientId=${encodeURIComponent(tid)}`);
+          const res = await fetch(`/${app.id === "composio2_test" ? "api/composio2" : "api/composio"}?action=status&integration=${app.id}&clientId=${encodeURIComponent(tid)}`);
           if (res.ok) {
             const data = await res.json();
             results[app.id] = { connected: data.connected, status: data.status, accountEmail: data.accountEmail };
@@ -153,9 +159,23 @@ export default function ConnectionsPage() {
     setVobizNumbers([]);
     setVobizSelectedNumber(null);
     setVobizStep("credentials");
+    setVobizManualNumber("");
+    setVobizWebhookConfigured(null);
+    setVobizWebhookUrl(null);
+    setVobizWebhookMessage(null);
     setShowVobizModal(true);
     setError(null);
     setSuccess(null);
+  }
+
+  function vobizWebhookLine(base: string, configured: boolean | null): string {
+    if (configured === true) {
+      return `${base} · webhook configured`;
+    }
+    if (configured === false) {
+      return `${base} · webhook auto-registration not supported (answer_url passed per-call)`;
+    }
+    return base;
   }
 
   async function handleVobizConnect() {
@@ -165,6 +185,9 @@ export default function ConnectionsPage() {
     }
     setVobizConnecting(true);
     setError(null);
+    setVobizWebhookConfigured(null);
+    setVobizWebhookUrl(null);
+    setVobizWebhookMessage(null);
     try {
       const res = await fetch("/api/v1/integrations/vobiz/connect", {
         method: "POST",
@@ -177,6 +200,10 @@ export default function ConnectionsPage() {
         setError(data.error || "Connection failed");
         return;
       }
+      setVobizWebhookConfigured(data.webhookConfigured === true);
+      setVobizWebhookUrl(data.webhookUrl || null);
+      setVobizWebhookMessage(data.webhookMessage || null);
+      const webhookConfigured = data.webhookConfigured === true;
       setSuccess("Credentials verified! Fetching numbers…");
       const numRes = await fetch("/api/v1/integrations/vobiz/numbers", { credentials: "include" });
       const numData = await numRes.json();
@@ -185,18 +212,24 @@ export default function ConnectionsPage() {
         return;
       }
       if (numData.numbers.length === 0) {
-        setSuccess("Connected! No numbers found on this account. Purchase a number from Vobiz to start calling.");
+        if (numData.allowManual) {
+          setVobizNumbers([]);
+          setVobizSelectedNumber(null);
+          setVobizStep("manual");
+          return;
+        }
+        setSuccess(vobizWebhookLine("Connected! No numbers found on this account. Purchase a number from Vobiz to start calling.", webhookConfigured));
         setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
-        setVobizDetail(data.balance ? `balance ${data.balance.amount} ${data.balance.currency}` : "connected");
+        setVobizDetail(vobizWebhookLine(data.balance ? `balance ${data.balance.amount} ${data.balance.currency}` : "connected", webhookConfigured));
         setShowVobizModal(false);
         return;
       }
       setVobizNumbers(numData.numbers);
       if (numData.selectedNumber) {
         setVobizSelectedNumber(numData.selectedNumber);
-        setSuccess(`Connected! Auto-selected number: ${numData.selectedNumber}`);
+        setSuccess(vobizWebhookLine(`Connected. Calls will come from ${numData.selectedNumber}`, webhookConfigured));
         setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
-        setVobizDetail(data.balance ? `balance ${data.balance.amount} ${data.balance.currency} · number ${numData.selectedNumber}` : `connected · number ${numData.selectedNumber}`);
+        setVobizDetail(vobizWebhookLine(data.balance ? `balance ${data.balance.amount} ${data.balance.currency} · number ${numData.selectedNumber}` : `connected · number ${numData.selectedNumber}`, webhookConfigured));
         setShowVobizModal(false);
         return;
       }
@@ -223,15 +256,24 @@ export default function ConnectionsPage() {
         return;
       }
       setVobizSelectedNumber(e164);
-      setSuccess(`Number ${e164} selected!`);
+      setSuccess(vobizWebhookLine(`Connected. Calls will come from ${e164}`, vobizWebhookConfigured));
       setConnections((prev) => ({ ...prev, vobiz: { connected: true, status: "active" } }));
-      setVobizDetail(`connected · number ${e164}`);
+      setVobizDetail(vobizWebhookLine(`connected · calls from ${e164}`, vobizWebhookConfigured));
       setShowVobizModal(false);
     } catch {
       setError("Network error — please try again");
     } finally {
       setVobizConnecting(false);
     }
+  }
+
+  async function handleVobizManualNumber() {
+    const e164 = vobizManualNumber.trim();
+    if (!e164) {
+      setError("Enter a phone number to use for outbound calls");
+      return;
+    }
+    await handleVobizSelectNumber(e164);
   }
 
   async function handleCalendarSetup() {
@@ -265,8 +307,10 @@ export default function ConnectionsPage() {
     setError(null);
     setSuccess(null);
 
+    const apiBase = integration === "composio2_test" ? "/api/composio2" : "/api/composio";
+
     try {
-      const res = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
+      const res = await fetch(`${apiBase}?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -284,7 +328,7 @@ export default function ConnectionsPage() {
               return;
             }
             setSuccess("Auth config ready. Starting OAuth...");
-            const retryRes = await fetch(`/api/composio?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
+            const retryRes = await fetch(`${apiBase}?action=connect&integration=${integration}&clientId=${encodeURIComponent(tenantId)}`);
             const retryData = await retryRes.json();
             if (retryRes.ok && retryData.needsAuth && retryData.authUrl) {
               window.location.href = retryData.authUrl;
@@ -328,7 +372,7 @@ export default function ConnectionsPage() {
     setSuccess(null);
 
     try {
-      const res = await fetch("/api/composio", {
+      const res = await fetch(integration === "composio2_test" ? "/api/composio2" : "/api/composio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "disconnect", integration, clientId: tenantId }),
@@ -534,12 +578,14 @@ export default function ConnectionsPage() {
                 <div>
                   <div style={{ color: "var(--accent)", fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 8 }}>Phone Integration</div>
                   <h2 id="vobiz-connect-title" style={{ margin: 0, fontSize: 22, fontWeight: 500, color: "var(--text)" }}>
-                    {vobizStep === "credentials" ? "Connect to Vobiz" : "Select a phone number"}
+                    {vobizStep === "credentials" ? "Connect to Vobiz" : vobizStep === "manual" ? "Add your caller number" : "Select a phone number"}
                   </h2>
                   <p style={{ margin: "8px 0 0", color: "var(--text-dim)", fontSize: 13, lineHeight: 1.6 }}>
                     {vobizStep === "credentials"
                       ? "Enter your Vobiz API credentials from console.vobiz.ai"
-                      : "Choose a number to use for outbound calls"}
+                      : vobizStep === "manual"
+                        ? "No numbers found on your account. Enter the caller-ID number to use for outbound calls (or purchase one from Vobiz)."
+                        : "Choose a number to use for outbound calls"}
                   </p>
                 </div>
                 <button type="button" onClick={() => setShowVobizModal(false)} aria-label="Close" style={{ width: 34, height: 34, flex: "0 0 auto", borderRadius: 9, border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-dim)", cursor: "pointer" }}>×</button>
@@ -547,6 +593,22 @@ export default function ConnectionsPage() {
             </div>
 
             <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 18 }}>
+              {vobizWebhookConfigured !== null && showVobizModal && (
+                <div style={{
+                  borderRadius: 10, padding: "12px 14px", fontSize: 12, lineHeight: 1.5,
+                  display: "flex", alignItems: "center", gap: 10,
+                  background: vobizWebhookConfigured ? "rgba(122,154,126,0.1)" : "rgba(193,124,96,0.1)",
+                  border: `1px solid ${vobizWebhookConfigured ? "rgba(122,154,126,0.3)" : "rgba(193,124,96,0.3)"}`,
+                  color: vobizWebhookConfigured ? "var(--green)" : "var(--amber)",
+                }}>
+                  <span style={{ fontSize: 14 }}>{vobizWebhookConfigured ? "✓" : "◐"}</span>
+                  <div style={{ flex: 1 }}>
+                    {vobizWebhookConfigured
+                      ? <>Webhook configured. Vobiz will post call updates to <span style={{ fontFamily: "monospace", fontSize: 11 }}>{vobizWebhookUrl}</span>.</>
+                      : <>Webhook auto-registration wasn't supported by Vobiz{ vobizWebhookMessage ? ` — ${vobizWebhookMessage}` : "" }. Outbound calls still work — callbacks are delivered via the per-call answer_url/hangup_url.</>}
+                  </div>
+                </div>
+              )}
               {vobizStep === "credentials" ? (
                 <>
                   <label style={{ display: "block" }}>
@@ -573,6 +635,22 @@ export default function ConnectionsPage() {
                   </label>
                   {vobizConnecting && <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--accent-soft)", color: "var(--accent)", fontSize: 12 }}>Verifying credentials and fetching numbers…</div>}
                 </>
+              ) : vobizStep === "manual" ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <label style={{ display: "block" }}>
+                    <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase", color: "var(--text-dim)", marginBottom: 7 }}>Caller-ID Number (E.164)</span>
+                    <input
+                      value={vobizManualNumber}
+                      onChange={(e) => setVobizManualNumber(e.target.value)}
+                      placeholder="+919876543210"
+                      autoFocus
+                      style={{ width: "100%", padding: "12px 14px", borderRadius: 10, fontSize: 14, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)", outline: "none", fontFamily: "monospace" }}
+                    />
+                  </label>
+                  <p style={{ margin: 0, fontSize: 11, color: "var(--text-light)", lineHeight: 1.5 }}>
+                    This number is saved as the from-number for outbound calls. If you haven't purchased one yet, add it in the Vobiz Console (console.vobiz.ai) first.
+                  </p>
+                </div>
               ) : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {vobizNumbers.map((num) => (
@@ -614,6 +692,20 @@ export default function ConnectionsPage() {
                   }}
                 >
                   {vobizConnecting ? "Connecting…" : "Connect"}
+                </button>
+              )}
+              {vobizStep === "manual" && (
+                <button
+                  type="button"
+                  onClick={handleVobizManualNumber}
+                  disabled={vobizConnecting || !vobizManualNumber.trim()}
+                  style={{
+                    padding: "11px 22px", border: 0, borderRadius: 10, background: "var(--accent)", color: "#fff", fontSize: 13, fontWeight: 600,
+                    cursor: vobizConnecting ? "wait" : "pointer",
+                    opacity: vobizConnecting || !vobizManualNumber.trim() ? 0.65 : 1,
+                  }}
+                >
+                  {vobizConnecting ? "Saving…" : "Use this number"}
                 </button>
               )}
             </div>
