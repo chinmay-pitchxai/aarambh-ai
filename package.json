@@ -11,6 +11,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "db:setup": "npx tsx scripts/setup-db.ts",
     "scheduler": "npx tsx src/backend/scheduler.ts",
     "seed:fresh": "npx tsx seed.ts",
     "guard:production": "node scripts/production-guard.mjs",
